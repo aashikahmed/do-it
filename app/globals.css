@@ -1,0 +1,182 @@
+@import "tailwindcss";
+
+/*
+  Do it. — tokens
+  ink      #10143A  navy ink for text (not black)
+  mist     #EEF0F8  cool app background
+  blue     #2B3CF0  brand ultramarine
+  sun      #FFC23D  a closed link / streak
+  ember    #FF5B3A  nudges, at-risk
+  ice      #8FD3FF  frozen links
+*/
+
+@theme {
+  --color-ink: #10143a;
+  --color-ink-2: #4a5078;
+  --color-ink-3: #8a8fb0;
+  --color-mist: #eef0f8;
+  --color-paper: #ffffff;
+  --color-line: #dde0ee;
+  --color-blue: #2b3cf0;
+  --color-blue-deep: #1a27b8;
+  --color-sun: #ffc23d;
+  --color-ember: #ff5b3a;
+  --color-mint: #12b886;
+  --color-violet: #7b4dff;
+  --color-rose: #f2457f;
+  --color-ice: #8fd3ff;
+
+  --font-sans: var(--font-brico), ui-sans-serif, system-ui, sans-serif;
+
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Per-pact color, set with data-color on any wrapper */
+[data-color] {
+  --pact: var(--color-blue);
+  --pact-deep: var(--color-blue-deep);
+  --pact-ink: #ffffff;
+  --pact-soft: #e3e6ff;
+}
+[data-color="sun"] {
+  --pact: #ffb81f;
+  --pact-deep: #e09a00;
+  --pact-ink: var(--color-ink);
+  --pact-soft: #fff1cc;
+}
+[data-color="ember"] {
+  --pact: var(--color-ember);
+  --pact-deep: #dc3b1b;
+  --pact-ink: #ffffff;
+  --pact-soft: #ffe2db;
+}
+[data-color="mint"] {
+  --pact: var(--color-mint);
+  --pact-deep: #0b8e67;
+  --pact-ink: #ffffff;
+  --pact-soft: #d3f5e9;
+}
+[data-color="violet"] {
+  --pact: var(--color-violet);
+  --pact-deep: #5a2ee0;
+  --pact-ink: #ffffff;
+  --pact-soft: #e8e0ff;
+}
+[data-color="rose"] {
+  --pact: var(--color-rose);
+  --pact-deep: #cf2560;
+  --pact-ink: #ffffff;
+  --pact-soft: #ffdbe7;
+}
+
+html {
+  background: var(--color-mist);
+  color: var(--color-ink);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: var(--color-mist);
+  font-family: var(--font-sans);
+  font-optical-sizing: auto;
+  overscroll-behavior-y: none;
+  min-height: 100dvh;
+}
+
+/* Phone-first: on wide screens the app sits in a phone-width column. */
+@media (min-width: 640px) {
+  html,
+  body {
+    background: #dfe2f0;
+  }
+}
+
+button,
+a,
+[role="button"] {
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@layer base {
+  input,
+  textarea,
+  select {
+    font-size: 16px; /* stops iOS zoom-on-focus; utilities can still go bigger */
+  }
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-blue);
+  outline-offset: 2px;
+}
+/* text fields draw their own focus state */
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
+.pt-safe {
+  padding-top: max(env(safe-area-inset-top), 12px);
+}
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 16px);
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+.display {
+  font-variation-settings: "wdth" 75;
+  letter-spacing: -0.035em;
+  line-height: 0.9;
+}
+
+@keyframes link-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.link-open {
+  animation: link-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: -200px 0;
+  }
+  to {
+    background-position: 200px 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(90deg, #e3e6f2 0, #f2f3f9 80px, #e3e6f2 160px);
+  background-size: 400px 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
