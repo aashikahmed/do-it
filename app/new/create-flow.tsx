@@ -7,7 +7,8 @@ import { createPact } from "@/lib/client-actions";
 import { Chain } from "@/components/chain";
 import { ShareInvite } from "@/components/share-invite";
 import { toast } from "@/components/toast";
-import { Toggle } from "@/components/toggle";
+import { ValueInput } from "@/components/measure-input";
+import { MEASURES, type Direction, type Measure, type Tracking } from "@/lib/measure";
 import { addDays, deviceTimeZone, todayIn } from "@/lib/dates";
 import { freezesFor } from "@/lib/streak";
 import { cadenceText } from "@/lib/view";
@@ -21,20 +22,22 @@ type Draft = {
   timesPerWeek: number;
   durationDays: number;
   startOffset: 0 | 1;
-  track: boolean;
+  measure: Measure;
+  direction: Direction;
   unit: string;
-  target: string;
+  /** minimum per check-in in the measure's unit (seconds for time) */
+  target: number | null;
 };
 
 const TEMPLATES: (Partial<Draft> & { title: string; emoji: string })[] = [
-  { emoji: "💪", title: "50 push-ups", cadence: "daily", track: true, unit: "push-ups", target: "50", color: "ember" },
-  { emoji: "🏋️", title: "Hit the gym", cadence: "weekly", timesPerWeek: 3, track: false, color: "blue" },
-  { emoji: "📚", title: "Read every day", cadence: "daily", track: true, unit: "pages", target: "10", color: "violet" },
-  { emoji: "🧘", title: "Meditate", cadence: "daily", track: true, unit: "minutes", target: "10", color: "mint" },
-  { emoji: "🏃", title: "Go for a run", cadence: "weekly", timesPerWeek: 3, track: true, unit: "km", target: "5", color: "rose" },
-  { emoji: "💻", title: "Deep work", cadence: "daily", track: true, unit: "minutes", target: "60", color: "blue" },
-  { emoji: "🍬", title: "No sugar", cadence: "daily", track: false, color: "sun" },
-  { emoji: "✍️", title: "Write", cadence: "daily", track: true, unit: "words", target: "300", color: "violet" },
+  { emoji: "💪", title: "Push-ups", cadence: "daily", measure: "count", unit: "push-ups", target: 20, color: "ember" },
+  { emoji: "🏋️", title: "Hit the gym", cadence: "weekly", timesPerWeek: 3, measure: "none", color: "blue" },
+  { emoji: "📚", title: "Read every day", cadence: "daily", measure: "count", unit: "pages", target: 10, color: "violet" },
+  { emoji: "🧘", title: "Meditate", cadence: "daily", measure: "time", direction: "up", target: 600, color: "mint" },
+  { emoji: "🏃", title: "Go for a run", cadence: "weekly", timesPerWeek: 3, measure: "distance", unit: "km", target: 3, color: "rose" },
+  { emoji: "💻", title: "Deep work", cadence: "daily", measure: "time", direction: "up", target: 3600, color: "blue" },
+  { emoji: "🍬", title: "No sugar", cadence: "daily", measure: "none", color: "sun" },
+  { emoji: "✍️", title: "Write", cadence: "daily", measure: "count", unit: "words", target: 300, color: "violet" },
 ];
 
 const EMOJIS = ["🔥", "💪", "🏋️", "🏃", "📚", "🧘", "💻", "✍️", "💧", "🥗", "🍬", "🌅", "🎸", "🧠", "🚶", "🙏"];
@@ -42,7 +45,7 @@ const COLORS: PactColor[] = ["blue", "ember", "sun", "mint", "violet", "rose"];
 const DAILY_LENGTHS = [7, 14, 21, 30, 60, 90];
 const WEEKLY_LENGTHS = [4, 8, 12];
 
-const STEPS = ["What", "How often", "How long", "Look"] as const;
+const STEPS = ["What", "How often", "How long", "Track", "Look"] as const;
 
 export function CreateFlow() {
   const router = useRouter();
@@ -58,14 +61,15 @@ export function CreateFlow() {
     timesPerWeek: 3,
     durationDays: 30,
     startOffset: 0,
-    track: false,
+    measure: "none",
+    direction: "up",
     unit: "",
-    target: "",
+    target: null,
   });
   const set = (patch: Partial<Draft>) => setD((x) => ({ ...x, ...patch }));
 
-  const canNext =
-    step === 0 ? d.title.trim().length > 0 : step === 3 ? !d.track || (d.unit.trim().length > 0 && Number(d.target) > 0) : true;
+  const tracking: Tracking = { measure: d.measure, direction: d.direction, unit: d.unit.trim() || null, target: d.target };
+  const canNext = step === 0 ? d.title.trim().length > 0 : step === 3 ? d.measure !== "count" || d.unit.trim().length > 0 : true;
 
   function go(n: number) {
     setDir(n > step ? 1 : -1);
@@ -84,8 +88,10 @@ export function CreateFlow() {
       durationDays: d.durationDays,
       startDate: addDays(todayIn(tz), d.startOffset),
       timezone: tz,
-      unit: d.track ? d.unit.trim() : undefined,
-      target: d.track ? Number(d.target) : null,
+      measure: d.measure,
+      direction: d.measure === "time" || d.measure === "weight" ? d.direction : "up",
+      unit: d.measure === "none" || d.measure === "time" ? undefined : d.unit.trim() || undefined,
+      target: d.measure !== "none" && d.target ? d.target : null,
     });
     setBusy(false);
     if (!res.ok) return toast(res.error, "error");
@@ -196,7 +202,7 @@ export function CreateFlow() {
                     <button
                       key={t.title}
                       onClick={() => {
-                        set({ ...t, track: t.track ?? false, unit: t.unit ?? "", target: t.target ?? "", timesPerWeek: t.timesPerWeek ?? 3, durationDays: t.cadence === "weekly" ? 28 : 30 });
+                        set({ ...t, measure: t.measure ?? "none", direction: t.direction ?? "up", unit: t.unit ?? "", target: t.target ?? null, timesPerWeek: t.timesPerWeek ?? 3, durationDays: t.cadence === "weekly" ? 28 : 30 });
                         go(1);
                       }}
                       className="flex h-11 items-center gap-2 rounded-full bg-paper px-4 text-[15px] font-semibold active:scale-95"
@@ -284,6 +290,76 @@ export function CreateFlow() {
 
             {step === 3 && (
               <>
+                <h1 className="display text-[48px] font-extrabold">Track progress?</h1>
+                <p className="mt-3 text-[16px] leading-snug text-ink-2">Log a number each time and you get a chart of how you&apos;re improving. Skip it to just keep the streak.</p>
+                <div className="mt-6 grid grid-cols-2 gap-2" role="radiogroup" aria-label="What to track">
+                  {MEASURES.map((m) => (
+                    <button
+                      key={m.value}
+                      role="radio"
+                      aria-checked={d.measure === m.value}
+                      onClick={() =>
+                        set({
+                          measure: m.value,
+                          target: m.value === d.measure ? d.target : null,
+                          unit: m.value === "distance" ? "km" : m.value === "weight" ? "kg" : m.value === "count" && d.measure === "count" ? d.unit : "",
+                          direction: "up",
+                        })
+                      }
+                      className={`rounded-[20px] p-4 text-left transition-colors ${m.value === "none" ? "col-span-2" : ""} ${d.measure === m.value ? "bg-blue text-white" : "bg-paper"}`}
+                    >
+                      <span className="block text-[18px] font-extrabold">{m.label}</span>
+                      <span className="block text-[14px] opacity-75">{m.hint}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {d.measure !== "none" && (
+                  <div className="mt-4 space-y-4 rounded-[22px] bg-paper p-4">
+                    {d.measure === "count" && (
+                      <Field label="What are you counting?">
+                        <input
+                          maxLength={24}
+                          value={d.unit}
+                          onChange={(e) => set({ unit: e.target.value })}
+                          placeholder="push-ups, pages, glasses"
+                          className="h-14 w-full rounded-2xl bg-mist px-4 text-[18px] font-semibold outline-none focus:ring-2 focus:ring-blue"
+                        />
+                      </Field>
+                    )}
+                    {d.measure === "distance" && (
+                      <Field label="Unit">
+                        <Segmented options={[["km", "Kilometres"], ["mi", "Miles"]]} value={d.unit} onChange={(v) => set({ unit: v, target: null })} />
+                      </Field>
+                    )}
+                    {d.measure === "weight" && (
+                      <>
+                        <Field label="Unit">
+                          <Segmented options={[["kg", "kg"], ["lb", "lb"]]} value={d.unit} onChange={(v) => set({ unit: v, target: null })} />
+                        </Field>
+                        <Field label="Which way is progress?">
+                          <Segmented options={[["up", "Heavier"], ["down", "Lighter"]]} value={d.direction} onChange={(v) => set({ direction: v as Direction })} />
+                        </Field>
+                      </>
+                    )}
+                    {d.measure === "time" && (
+                      <Field label="Which way is progress?">
+                        <Segmented options={[["up", "Longer (a hold, practice)"], ["down", "Faster (a run, a mile)"]]} value={d.direction} onChange={(v) => set({ direction: v as Direction })} />
+                      </Field>
+                    )}
+                    <Field label={d.direction === "down" && (d.measure === "time" || d.measure === "weight") ? "Goal (optional)" : "Minimum each time (optional)"}>
+                      <div className="rounded-2xl bg-mist/60 p-2">
+                        <ValueInput t={tracking} value={d.target} onChange={(v) => set({ target: v })} size="md" />
+                      </div>
+                    </Field>
+                  </div>
+                )}
+                <p className="mt-4 text-[14px] leading-snug text-ink-3">Every check-in can also be rated Tough, Good or Strong, so you see how it felt over time.</p>
+              </>
+            )}
+
+            {step === 4 && (
+              <>
                 <h1 className="display text-[48px] font-extrabold">Make it yours.</h1>
                 <div data-color={d.color} className="mt-6 rounded-[28px] bg-[var(--pact)] p-5 text-[var(--pact-ink)] transition-colors">
                   <div className="flex items-center gap-3">
@@ -321,35 +397,6 @@ export function CreateFlow() {
                   ))}
                 </div>
 
-                <div className="mt-6 rounded-[22px] bg-paper p-4">
-                  <label className="flex items-center justify-between gap-4">
-                    <span>
-                      <span className="block text-[17px] font-bold">Track a number</span>
-                      <span className="block text-[14px] text-ink-2">Log how many each time, like pages or minutes.</span>
-                    </span>
-                    <Toggle checked={d.track} onChange={(v) => set({ track: v })} />
-                  </label>
-                  {d.track && (
-                    <div className="mt-4 grid grid-cols-[1fr_1.3fr] gap-2">
-                      <input
-                        inputMode="decimal"
-                        value={d.target}
-                        onChange={(e) => set({ target: e.target.value.replace(/[^0-9.]/g, "").slice(0, 7) })}
-                        placeholder="Goal"
-                        aria-label="Goal each time"
-                        className="h-14 min-w-0 rounded-2xl bg-mist px-4 text-[18px] font-bold outline-none focus:ring-2 focus:ring-blue"
-                      />
-                      <input
-                        maxLength={24}
-                        value={d.unit}
-                        onChange={(e) => set({ unit: e.target.value })}
-                        placeholder="Unit, e.g. pages"
-                        aria-label="Unit"
-                        className="h-14 min-w-0 rounded-2xl bg-mist px-4 text-[18px] font-semibold outline-none focus:ring-2 focus:ring-blue"
-                      />
-                    </div>
-                  )}
-                </div>
               </>
             )}
           </motion.section>
@@ -396,5 +443,32 @@ function Stepper({ children, onClick, disabled, label }: { children: React.React
     >
       {children}
     </button>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="mb-2 text-[15px] font-bold text-ink-2">{label}</p>
+      {children}
+    </div>
+  );
+}
+
+function Segmented({ options, value, onChange }: { options: [string, string][]; value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="grid gap-1 rounded-2xl bg-mist p-1" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }} role="radiogroup">
+      {options.map(([v, label]) => (
+        <button
+          key={v}
+          role="radio"
+          aria-checked={value === v}
+          onClick={() => onChange(v)}
+          className={`min-h-11 rounded-xl px-2 py-2 text-[14px] leading-tight font-bold ${value === v ? "bg-ink text-white" : "text-ink-2"}`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }

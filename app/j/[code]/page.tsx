@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { optionalUser } from "@/lib/data";
 import { cadenceText, listNames, startsText } from "@/lib/view";
 import { todayIn, diffDays } from "@/lib/dates";
+import { targetText, type Direction, type Measure } from "@/lib/measure";
 import { JoinButton } from "./join-button";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -18,6 +19,8 @@ type Preview = {
   duration_days: number;
   start_date: string;
   timezone: string;
+  measure: Measure;
+  direction: Direction;
   unit: string | null;
   target: number | null;
   ended: boolean;
@@ -69,11 +72,7 @@ async function Invite({ params }: { params: PageProps<"/j/[code]">["params"] }) 
         <ul className="mt-6 space-y-1.5 text-[17px] font-medium opacity-90">
           <li>{cadenceText(p)}</li>
           <li>{started ? `Day ${Math.min(diffDays(p.start_date, today) + 1, p.duration_days)} of ${p.duration_days}` : startsText(p.start_date, today)}</li>
-          {p.unit && p.target && (
-            <li>
-              Goal: {p.target} {p.unit} each time
-            </li>
-          )}
+          {p.measure !== "none" && <li>{targetText(p) ?? `Tracking ${p.measure === "time" ? "time" : p.unit}`}</li>}
           <li>{listNames(names, 3)} {names.length === 1 ? "is" : "are"} in</li>
         </ul>
       </div>

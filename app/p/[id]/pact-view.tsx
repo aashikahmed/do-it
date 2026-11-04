@@ -17,11 +17,15 @@ import { toast } from "@/components/toast";
 import type { Checkin, Me, PactBundle } from "@/lib/data";
 import { diffDays, formatDay } from "@/lib/dates";
 import { cadenceText, firstName, listNames, progressText, startsText } from "@/lib/view";
+import { FEELS, formatValue, isBetter, targetText, type Feel, type Tracking } from "@/lib/measure";
+import { FeelPicker, ValueInput } from "@/components/measure-input";
+import { ProgressView } from "@/components/progress-view";
 
 export function PactView({ b, me }: { b: PactBundle; me: Me }) {
   const { pact, state, members } = b;
   const [menuOpen, setMenuOpen] = useState(false);
   const [burst, setBurst] = useState<{ title: string; subtitle?: string } | null>(null);
+  const [tab, setTab] = useState<"today" | "progress">("today");
   const isSolo = members.length === 1;
 
   return (
@@ -29,7 +33,30 @@ export function PactView({ b, me }: { b: PactBundle; me: Me }) {
       <Live pactIds={[pact.id]} days={[{ tz: pact.timezone, today: b.today }]} />
       <Hero b={b} onMenu={() => setMenuOpen(true)} />
 
-      <div className="space-y-3 px-4 pt-4">
+      {state.phase !== "upcoming" && (
+        <div className="sticky top-0 z-20 bg-mist/90 px-4 pt-safe pb-1 backdrop-blur-md [padding-top:max(env(safe-area-inset-top),8px)]">
+          <div className="grid grid-cols-2 gap-1 rounded-full bg-paper p-1" role="tablist" aria-label="Pact view">
+            {(["today", "progress"] as const).map((k) => (
+              <button
+                key={k}
+                role="tab"
+                aria-selected={tab === k}
+                onClick={() => setTab(k)}
+                className={`h-10 rounded-full text-[15px] font-extrabold transition-colors ${tab === k ? "bg-ink text-white" : "text-ink-2"}`}
+              >
+                {k === "today" ? (state.phase === "ended" ? "Summary" : pact.cadence === "daily" ? "Today" : "This week") : "Progress"}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === "progress" ? (
+        <div className="px-4 pt-3">
+          <ProgressView b={b} me={me} />
+        </div>
+      ) : (
+      <div className="space-y-3 px-4 pt-3">
         {state.repair && <RepairCard b={b} me={me.id} />}
         {state.phase === "ended" ? (
           <Recap b={b} />
@@ -42,6 +69,7 @@ export function PactView({ b, me }: { b: PactBundle; me: Me }) {
         )}
         <Activity b={b} />
       </div>
+      )}
 
       {state.phase === "active" && <ActionBar b={b} me={me} onCelebrate={setBurst} />}
       {state.phase === "upcoming" && (
@@ -88,7 +116,10 @@ function Hero({ b, onMenu }: { b: PactBundle; onMenu: () => void }) {
         </span>
         <div className="min-w-0">
           <h1 className="text-[24px] leading-tight font-extrabold tracking-tight">{pact.title}</h1>
-          <p className="text-[15px] font-medium opacity-80">{cadenceText(pact)}</p>
+          <p className="text-[15px] font-medium opacity-80">
+            {cadenceText(pact)}
+            {targetText(pact) ? `. ${targetText(pact)}` : ""}
+          </p>
         </div>
       </div>
 
@@ -172,7 +203,7 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
           let status: string;
           if (state.phase === "upcoming") status = isMe ? "Ready" : `Joined ${formatDay(m.joined_at.slice(0, 10), { day: "numeric", month: "short" })}`;
           else if (!required) status = pact.cadence === "daily" ? "Joins the chain tomorrow" : "Joins the chain next week";
-          else if (pact.cadence === "daily") status = todays ? describe(todays, pact.unit) : "Not yet";
+          else if (pact.cadence === "daily") status = todays ? describe(todays, pact) : "Not yet";
           else status = `${count} of ${state.need} this week${todays ? ", done today" : ""}`;
 
           return (
@@ -200,13 +231,17 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
   );
 }
 
-function describe(c: Checkin, unit: string | null) {
-  if (c.value !== null && unit) return `Done, ${fmtNum(c.value)} ${unit}`;
-  return "Done";
+function describe(c: Checkin, t: Tracking) {
+  const bits = ["Done"];
+  if (c.value !== null && t.measure !== "none") bits.push(formatValue(t, c.value));
+  if (c.feel) bits.push(FEELS[c.feel - 1].label.toLowerCase());
+  return bits.join(", ");
 }
 
-function fmtNum(n: number) {
-  return new Intl.NumberFormat("en", { maximumFractionDigits: 2 }).format(n);
+/** Where a new check-in's number starts: your last logged value, else the minimum. */
+function startValue(b: PactBundle, me: string) {
+  const last = b.checkins.find((c) => c.user_id === me && c.value !== null);
+  return last?.value ?? b.pact.target ?? null;
 }
 
 /**
@@ -269,7 +304,9 @@ function ActionBar({ b, me, onCelebrate }: { b: PactBundle; me: Me; onCelebrate:
   const mineToday = b.checkins.find((c) => c.user_id === me.id && c.day === b.today);
   const mineYesterday = b.checkins.find((c) => c.user_id === me.id && c.day === b.yesterday);
   const canBackfill = !mineYesterday && b.yesterday >= pact.start_date && diffDays(pact.start_date, b.yesterday) < pact.duration_days;
-  const [value, setValue] = useState(pact.target !== null ? String(pact.target) : "");
+  const tracked = pact.measure !== "none";
+  const [value, setValue] = useState<number | null>(() => startValue(b, me.id));
+  const [feel, setFeel] = useState<Feel | null>(null);
   const [note, setNote] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -282,8 +319,8 @@ function ActionBar({ b, me, onCelebrate }: { b: PactBundle; me: Me; onCelebrate:
   async function commit() {
     if (busy) return;
     setBusy(true);
-    const v = pact.unit && value !== "" ? Number(value) : null;
-    const res = await checkIn({ pactId: pact.id, when: "today", value: v !== null && Number.isFinite(v) ? v : null, note: note.trim() || null });
+    const prevBest = b.checkins.filter((c) => c.user_id === me.id && c.value !== null).reduce<number | null>((best, c) => (best === null || isBetter(pact.direction, c.value!, best) ? c.value! : best), null);
+    const res = await checkIn({ pactId: pact.id, when: "today", value: tracked ? value : null, note: note.trim() || null, feel });
     setBusy(false);
     if (!res.ok) return toast(res.error, "error");
 
@@ -298,12 +335,15 @@ function ActionBar({ b, me, onCelebrate }: { b: PactBundle; me: Me; onCelebrate:
     if (owing.length === 0 && iClose && state.current?.status !== "done") {
       const n = state.streak + 1;
       onCelebrate({ title: `${n} ${n === 1 ? unit : unit + "s"}`, subtitle: b.members.length > 1 ? "Everyone's in. The chain holds." : "Link closed." });
+    } else if (tracked && value !== null && prevBest !== null && isBetter(pact.direction, value, prevBest)) {
+      onCelebrate({ title: "New best.", subtitle: `${formatValue(pact, value)}${owing.length ? `. ${listNames(owing.map((m) => firstName(m.name)))}'s turn now.` : ""}` });
     } else if (owing.length > 0) {
       onCelebrate({ title: "Done.", subtitle: `${listNames(owing.map((m) => firstName(m.name)))}'s turn now.` });
     } else {
       onCelebrate({ title: "Done.", subtitle: pact.cadence === "weekly" ? `${myCount + 1} of ${state.need} this week` : undefined });
     }
     setNote("");
+    setFeel(null);
     setNoteOpen(false);
     router.refresh();
   }
@@ -327,7 +367,7 @@ function ActionBar({ b, me, onCelebrate }: { b: PactBundle; me: Me; onCelebrate:
             <div className="min-w-0 flex-1">
               <p className="text-[17px] font-extrabold">You did it today</p>
               <p className="truncate text-[14px] text-ink-2">
-                {mineToday.value !== null && pact.unit ? `${fmtNum(mineToday.value)} ${pact.unit}` : "Checked in"}
+                {describe(mineToday, pact).replace(/^Done, ?/, "") || "Checked in"}
                 {mineToday.note ? `, “${mineToday.note}”` : ""}
               </p>
             </div>
@@ -337,50 +377,22 @@ function ActionBar({ b, me, onCelebrate }: { b: PactBundle; me: Me; onCelebrate:
           </motion.div>
         ) : (
           <motion.div key="todo" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="space-y-2">
-            {(pact.unit || noteOpen) && (
-              <div className="space-y-2 rounded-[22px] bg-paper p-3 shadow-[0_10px_30px_-16px_rgba(16,20,58,0.35)]">
-                {pact.unit && (
-                  <div className="flex items-center gap-2">
-                    <button
-                      aria-label="Less"
-                      onClick={() => setValue((v) => String(Math.max(0, (Number(v) || 0) - step(pact.target))))}
-                      className="flex h-12 w-12 items-center justify-center rounded-full bg-mist text-[24px] font-bold"
-                    >
-                      −
-                    </button>
-                    <label className="flex flex-1 items-baseline justify-center gap-2">
-                      <input
-                        inputMode="decimal"
-                        value={value}
-                        onChange={(e) => setValue(e.target.value.replace(/[^0-9.]/g, "").slice(0, 7))}
-                        className="display tnum w-[4.5ch] bg-transparent text-right text-[40px] font-extrabold outline-none"
-                        aria-label={`How many ${pact.unit}`}
-                      />
-                      <span className="text-[16px] font-bold text-ink-2">{pact.unit}</span>
-                    </label>
-                    <button
-                      aria-label="More"
-                      onClick={() => setValue((v) => String((Number(v) || 0) + step(pact.target)))}
-                      className="flex h-12 w-12 items-center justify-center rounded-full bg-mist text-[24px] font-bold"
-                    >
-                      +
-                    </button>
-                  </div>
-                )}
-                {noteOpen && (
-                  <textarea
-                    autoFocus
-                    rows={2}
-                    maxLength={280}
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder="How did it go?"
-                    aria-label="Note"
-                    className="w-full resize-none rounded-2xl bg-mist px-4 py-3 text-[16px] outline-none focus:ring-2 focus:ring-[var(--pact)]"
-                  />
-                )}
-              </div>
-            )}
+            <div className="space-y-2.5 rounded-[22px] bg-paper p-3 shadow-[0_10px_30px_-16px_rgba(16,20,58,0.35)]">
+              {tracked && <ValueInput t={pact} value={value} onChange={setValue} />}
+              <FeelPicker value={feel} onChange={setFeel} />
+              {noteOpen && (
+                <textarea
+                  autoFocus
+                  rows={2}
+                  maxLength={280}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Anything to remember about today?"
+                  aria-label="Note"
+                  className="w-full resize-none rounded-2xl bg-mist px-4 py-3 text-[16px] outline-none focus:ring-2 focus:ring-[var(--pact)]"
+                />
+              )}
+            </div>
             <HoldButton
               label={pact.cadence === "weekly" ? `Hold to log today (${myCount}/${state.need})` : "Hold to check in"}
               busy={busy}
@@ -403,51 +415,42 @@ function ActionBar({ b, me, onCelebrate }: { b: PactBundle; me: Me; onCelebrate:
       </AnimatePresence>
 
       {mineToday && <EditSheet b={b} c={mineToday} open={editOpen} onClose={() => setEditOpen(false)} />}
-      <BackfillSheet b={b} open={backfillOpen} onClose={() => setBackfillOpen(false)} />
+      <BackfillSheet b={b} me={me.id} open={backfillOpen} onClose={() => setBackfillOpen(false)} />
     </div>
   );
 }
 
-function step(target: number | null) {
-  if (!target) return 1;
-  if (target >= 100) return 10;
-  if (target >= 20) return 5;
-  return 1;
-}
-
 function EntryFields({
-  unit,
+  t,
   value,
   setValue,
+  feel,
+  setFeel,
   note,
   setNote,
 }: {
-  unit: string | null;
-  value: string;
-  setValue: (v: string) => void;
+  t: Tracking;
+  value: number | null;
+  setValue: (v: number | null) => void;
+  feel: Feel | null;
+  setFeel: (v: Feel | null) => void;
   note: string;
   setNote: (v: string) => void;
 }) {
   return (
-    <div className="space-y-2">
-      {unit && (
-        <label className="flex h-14 items-center gap-2 rounded-2xl bg-mist px-4">
-          <input
-            inputMode="decimal"
-            value={value}
-            onChange={(e) => setValue(e.target.value.replace(/[^0-9.]/g, "").slice(0, 7))}
-            className="tnum min-w-0 flex-1 bg-transparent text-[20px] font-extrabold outline-none"
-            aria-label={`How many ${unit}`}
-          />
-          <span className="font-bold text-ink-2">{unit}</span>
-        </label>
+    <div className="space-y-3">
+      {t.measure !== "none" && (
+        <div className="rounded-2xl bg-mist/60 p-2">
+          <ValueInput t={t} value={value} onChange={setValue} size="md" />
+        </div>
       )}
+      <FeelPicker value={feel} onChange={setFeel} />
       <textarea
         rows={3}
         maxLength={280}
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        placeholder="How did it go? (optional)"
+        placeholder="Anything to remember? (optional)"
         aria-label="Note"
         className="w-full resize-none rounded-2xl bg-mist px-4 py-3 text-[16px] outline-none focus:ring-2 focus:ring-[var(--pact)]"
       />
@@ -456,7 +459,8 @@ function EntryFields({
 }
 
 function EditSheet({ b, c, open, onClose }: { b: PactBundle; c: Checkin; open: boolean; onClose: () => void }) {
-  const [value, setValue] = useState(c.value !== null ? String(c.value) : "");
+  const [value, setValue] = useState<number | null>(c.value);
+  const [feel, setFeel] = useState<Feel | null>(c.feel);
   const [note, setNote] = useState(c.note ?? "");
   const [busy, setBusy] = useState(false);
   const [confirmUndo, setConfirmUndo] = useState(false);
@@ -464,7 +468,7 @@ function EditSheet({ b, c, open, onClose }: { b: PactBundle; c: Checkin; open: b
 
   async function save() {
     setBusy(true);
-    const res = await updateCheckIn({ pactId: b.pact.id, day: c.day, value: b.pact.unit && value !== "" ? Number(value) : null, note: note.trim() || null });
+    const res = await updateCheckIn({ pactId: b.pact.id, day: c.day, value: b.pact.measure !== "none" ? value : null, note: note.trim() || null, feel });
     setBusy(false);
     if (!res.ok) return toast(res.error, "error");
     toast("Saved");
@@ -484,7 +488,7 @@ function EditSheet({ b, c, open, onClose }: { b: PactBundle; c: Checkin; open: b
 
   return (
     <Sheet open={open} onClose={onClose} title="Today's check-in">
-      <EntryFields unit={b.pact.unit} value={value} setValue={setValue} note={note} setNote={setNote} />
+      <EntryFields t={b.pact} value={value} setValue={setValue} feel={feel} setFeel={setFeel} note={note} setNote={setNote} />
       <button disabled={busy} onClick={save} className="mt-4 h-14 w-full rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-50">
         Save
       </button>
@@ -499,15 +503,16 @@ function EditSheet({ b, c, open, onClose }: { b: PactBundle; c: Checkin; open: b
   );
 }
 
-function BackfillSheet({ b, open, onClose }: { b: PactBundle; open: boolean; onClose: () => void }) {
-  const [value, setValue] = useState(b.pact.target !== null ? String(b.pact.target) : "");
+function BackfillSheet({ b, me, open, onClose }: { b: PactBundle; me: string; open: boolean; onClose: () => void }) {
+  const [value, setValue] = useState<number | null>(() => startValue(b, me));
+  const [feel, setFeel] = useState<Feel | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const router = useRouter();
 
   async function save() {
     setBusy(true);
-    const res = await checkIn({ pactId: b.pact.id, when: "yesterday", value: b.pact.unit && value !== "" ? Number(value) : null, note: note.trim() || null });
+    const res = await checkIn({ pactId: b.pact.id, when: "yesterday", value: b.pact.measure !== "none" ? value : null, note: note.trim() || null, feel });
     setBusy(false);
     if (!res.ok) return toast(res.error, "error");
     toast("Logged for yesterday");
@@ -520,7 +525,7 @@ function BackfillSheet({ b, open, onClose }: { b: PactBundle; open: boolean; onC
       <p className="mb-4 text-[16px] text-ink-2">
         Did it on {formatDay(b.yesterday, { weekday: "long" })} but forgot to check in? You can log it until midnight tonight.
       </p>
-      <EntryFields unit={b.pact.unit} value={value} setValue={setValue} note={note} setNote={setNote} />
+      <EntryFields t={b.pact} value={value} setValue={setValue} feel={feel} setFeel={setFeel} note={note} setNote={setNote} />
       <button disabled={busy} onClick={save} className="mt-4 h-14 w-full rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-50">
         {busy ? "Saving…" : "Log yesterday"}
       </button>
@@ -617,7 +622,8 @@ function Activity({ b }: { b: PactBundle }) {
               <p className="text-[15px]">
                 <b>{firstName(name(c.user_id))}</b>{" "}
                 <span className="text-ink-2">
-                  {c.value !== null && b.pact.unit ? `did ${fmtNum(c.value)} ${b.pact.unit}` : "checked in"}
+                  {c.value !== null && b.pact.measure !== "none" ? `did ${formatValue(b.pact, c.value)}` : "checked in"}
+                  {c.feel ? `, felt ${FEELS[c.feel - 1].label.toLowerCase()}` : ""}
                 </span>
               </p>
               {c.note && <p className="mt-0.5 text-[15px] leading-snug break-words">{c.note}</p>}
@@ -641,7 +647,11 @@ function Recap({ b }: { b: PactBundle }) {
     .filter((m) => members.some((x) => x.user_id === m.user_id) || b.checkins.some((c) => c.user_id === m.user_id))
     .map((m) => {
       const mine = b.checkins.filter((c) => c.user_id === m.user_id);
-      return { m, count: mine.length, total: mine.reduce((s, c) => s + (c.value ?? 0), 0) };
+      const vals = mine.filter((c) => c.value !== null).map((c) => c.value as number);
+      const best = vals.length ? vals.reduce((x, v) => (isBetter(pact.direction, v, x) ? v : x), vals[0]) : null;
+      const sums = pact.measure === "count" || pact.measure === "distance" || (pact.measure === "time" && pact.direction === "up");
+      const extra = !vals.length || pact.measure === "none" ? "" : sums ? `, ${formatValue(pact, vals.reduce((x, v) => x + v, 0))} total` : `, best ${formatValue(pact, best!)}`;
+      return { m, count: mine.length, extra };
     })
     .sort((a, z) => z.count - a.count);
 
@@ -652,12 +662,12 @@ function Recap({ b }: { b: PactBundle }) {
         {kept} of {state.periods.length} {unit} kept, with a best streak of {state.best}.
       </p>
       <ul className="mt-5 space-y-3">
-        {per.map(({ m, count, total }) => (
+        {per.map(({ m, count, extra }) => (
           <li key={m.user_id} className="flex items-center gap-3">
             <Avatar id={m.user_id} name={m.name} src={m.avatar_url} size={36} />
             <span className="flex-1 text-[16px] font-bold">{m.name}</span>
             <span className="tnum text-right text-[15px] text-ink-2">
-              {count} check-ins{pact.unit && total ? `, ${fmtNum(total)} ${pact.unit}` : ""}
+              {count} check-ins{extra}
             </span>
           </li>
         ))}
@@ -698,6 +708,7 @@ function MenuSheet({ b, me, open, onClose }: { b: PactBundle; me: Me; open: bool
     >
       <dl className="space-y-3 rounded-2xl bg-mist p-4 text-[15px]">
         <Row k="Schedule" v={cadenceText(b.pact)} />
+        <Row k="Tracking" v={b.pact.measure === "none" ? "Streak only" : targetText(b.pact) ?? (b.pact.measure === "time" ? "Time" : b.pact.unit ?? "")} />
         <Row k="Dates" v={`${formatDay(b.pact.start_date, { day: "numeric", month: "short" })} to ${formatDay(b.state.endDate, { day: "numeric", month: "short" })}`} />
         <Row k="Freezes" v={`${b.state.freezesLeft} of ${b.pact.freezes_allowed} left, shared`} />
         <Row k="Day ends" v={`Midnight, ${b.pact.timezone.replace(/_/g, " ")}`} />

@@ -4,6 +4,7 @@ import { todayIn } from "./dates";
 import { computePactState } from "./streak";
 import { sendPush } from "./push";
 import { fetchAll, type Pact } from "./data";
+import { formatValue } from "./measure";
 
 type MemberRow = { user_id: string; joined_on: string; left_on: string | null; profile?: unknown };
 
@@ -21,7 +22,7 @@ export async function notifyCheckin(pactId: string, actorId: string, day: string
   const [{ data: pact }, { data: members }, { data: checkins }, { data: freezes }] = await Promise.all([
     admin.from("pacts").select("*").eq("id", pactId).single<Pact>(),
     admin.from("pact_members").select("user_id,joined_on,left_on,profile:profiles(display_name)").eq("pact_id", pactId),
-    fetchAll<{ user_id: string; day: string }>(() => admin.from("checkins").select("user_id,day").eq("pact_id", pactId).order("day").order("user_id")),
+    fetchAll<{ user_id: string; day: string; value: number | null }>(() => admin.from("checkins").select("user_id,day,value").eq("pact_id", pactId).order("day").order("user_id")),
     admin.from("freezes").select("period_start").eq("pact_id", pactId),
   ]);
   if (!pact || !members) return;
@@ -32,6 +33,8 @@ export async function notifyCheckin(pactId: string, actorId: string, day: string
   const others = all.filter((m) => !m.left_on && m.user_id !== actorId).map((m) => m.user_id);
   const url = `/p/${pactId}`;
   const cur = state.current;
+  const mine = (checkins ?? []).find((c) => c.user_id === actorId && c.day === day);
+  const did = mine?.value != null && pact.measure !== "none" ? ` (${formatValue(pact, Number(mine.value))})` : "";
 
   if (cur && cur.status === "done" && day >= cur.start && day <= cur.end && (cur.counts[actorId] ?? 0) <= state.need) {
     const unit = pact.cadence === "daily" ? "day" : "week";
@@ -55,13 +58,13 @@ export async function notifyCheckin(pactId: string, actorId: string, day: string
   const doneOthers = others.length <= 2 ? others.filter((u) => !waiting.includes(u)) : [];
   await Promise.all([
     sendPush(waiting, {
-      title: `${pact.emoji} ${actorName} just did it`,
+      title: `${pact.emoji} ${actorName} just did it${did}`,
       body: `${pact.title}. Your turn.`,
       url,
       tag: `pact-${pactId}`,
     }),
     sendPush(doneOthers, {
-      title: `${pact.emoji} ${actorName} checked in`,
+      title: `${pact.emoji} ${actorName} checked in${did}`,
       body: `${pact.title}. One step closer.`,
       url,
       tag: `pact-${pactId}`,

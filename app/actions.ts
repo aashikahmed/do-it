@@ -72,6 +72,8 @@ const createSchema = z.object({
   durationDays: z.number().int().min(7).max(365),
   startDate: day,
   timezone: z.string().max(64),
+  measure: z.enum(["none", "count", "time", "distance", "weight"]),
+  direction: z.enum(["up", "down"]),
   unit: z.string().trim().max(24).optional(),
   target: z.number().positive().max(999999).nullable().optional(),
 });
@@ -91,8 +93,10 @@ export async function createPact(input: z.input<typeof createSchema>): Promise<A
     p_duration_days: v.durationDays,
     p_start_date: v.startDate,
     p_timezone: tz,
+    p_measure: v.measure,
+    p_direction: v.direction,
     p_unit: v.unit || null,
-    p_target: v.unit && v.target ? v.target : null,
+    p_target: v.measure !== "none" && v.target ? v.target : null,
   });
   if (error || !id) return fail(friendly(error?.message));
   const { data: pact } = await supabase.from("pacts").select("invite_code").eq("id", id).single();
@@ -149,6 +153,7 @@ const checkinSchema = z.object({
   when: z.enum(["today", "yesterday"]),
   value: z.number().min(0).max(999999).nullable().optional(),
   note: z.string().trim().max(280).nullable().optional(),
+  feel: z.union([z.literal(1), z.literal(2), z.literal(3)]).nullable().optional(),
 });
 
 export async function checkIn(input: z.input<typeof checkinSchema>): Promise<ActionResult<{ created: boolean }>> {
@@ -159,7 +164,7 @@ export async function checkIn(input: z.input<typeof checkinSchema>): Promise<Act
   if (!pact) return fail("Pact not found");
   const today = todayIn(pact.timezone);
   const v = { ...parsed.data, day: parsed.data.when === "today" ? today : addDays(today, -1) };
-  const row = { value: v.value ?? null, note: v.note || null };
+  const row = { value: v.value ?? null, note: v.note || null, feel: v.feel ?? null };
 
   const { data: existing } = await supabase
     .from("checkins")
@@ -187,15 +192,21 @@ export async function checkIn(input: z.input<typeof checkinSchema>): Promise<Act
 }
 
 /** Edit the value/note of an existing check-in. */
-export async function updateCheckIn(input: { pactId: string; day: string; value?: number | null; note?: string | null }): Promise<ActionResult> {
+export async function updateCheckIn(input: { pactId: string; day: string; value?: number | null; note?: string | null; feel?: 1 | 2 | 3 | null }): Promise<ActionResult> {
   const parsed = z
-    .object({ pactId: uuid, day, value: z.number().min(0).max(999999).nullable().optional(), note: z.string().trim().max(280).nullable().optional() })
+    .object({
+      pactId: uuid,
+      day,
+      value: z.number().min(0).max(999999).nullable().optional(),
+      note: z.string().trim().max(280).nullable().optional(),
+      feel: z.union([z.literal(1), z.literal(2), z.literal(3)]).nullable().optional(),
+    })
     .safeParse(input);
   if (!parsed.success) return fail("Check the details and try again");
   const { supabase, userId } = await requireUser();
   const { data, error } = await supabase
     .from("checkins")
-    .update({ value: parsed.data.value ?? null, note: parsed.data.note || null })
+    .update({ value: parsed.data.value ?? null, note: parsed.data.note || null, feel: parsed.data.feel ?? null })
     .eq("pact_id", parsed.data.pactId)
     .eq("user_id", userId)
     .eq("day", parsed.data.day)

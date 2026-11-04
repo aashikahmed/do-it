@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "./supabase/server";
 import { addDays, todayIn, type Day } from "./dates";
 import { computePactState, type Cadence, type PactState } from "./streak";
+import type { Direction, Measure } from "./measure";
 
 export type PactColor = "blue" | "sun" | "ember" | "mint" | "violet" | "rose";
 
@@ -17,6 +18,8 @@ export interface Pact {
   duration_days: number;
   start_date: Day;
   timezone: string;
+  measure: Measure;
+  direction: Direction;
   unit: string | null;
   target: number | null;
   freezes_allowed: number;
@@ -41,6 +44,7 @@ export interface Checkin {
   day: Day;
   value: number | null;
   note: string | null;
+  feel: 1 | 2 | 3 | null;
   created_at: string;
 }
 
@@ -103,7 +107,9 @@ async function loadBundles(supabase: SupabaseClient, pactId?: string) {
     scope(supabase.from("pacts").select("*"), "id"),
     scope(supabase.from("pact_members").select("pact_id,user_id,joined_on,joined_at,left_on,profile:profiles(display_name,avatar_url)"), "pact_id"),
     fetchAll<Checkin>(() =>
-      scope(supabase.from("checkins").select("id,pact_id,user_id,day,value,note,created_at"), "pact_id")
+      scope(supabase.from("checkins").select("id,pact_id,user_id,day,value,note,feel,created_at"), "pact_id")
+        // newest day first (a late "log yesterday" must not count as the latest), then entry time
+        .order("day", { ascending: false })
         .order("created_at", { ascending: false })
         .order("id"),
     ),
