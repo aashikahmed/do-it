@@ -50,6 +50,7 @@ export function PactCard({ b, me }: { b: PactBundle; me: string }) {
               key={m.user_id}
               id={m.user_id}
               name={m.name}
+              src={m.avatar_url}
               size={30}
               ring="#fff"
               done={!ended && b.state.phase === "active" && didTheirPart(b, m.user_id)}

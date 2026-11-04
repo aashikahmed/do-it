@@ -14,6 +14,9 @@ export default function Page() {
 
 async function Me() {
   const { supabase, userId, email } = await requireUser();
-  const me = await getMe(supabase, userId);
-  return <Settings me={me} email={email} />;
+  const [me, claims] = await Promise.all([getMe(supabase, userId), supabase.auth.getClaims()]);
+  const meta = (claims.data?.claims?.user_metadata ?? {}) as { avatar_url?: string; picture?: string };
+  const g = meta.avatar_url || meta.picture || "";
+  const googlePhoto = /^https:\/\/[a-z0-9.-]+\.googleusercontent\.com\//.test(g) ? g : null;
+  return <Settings me={me} email={email} googlePhoto={googlePhoto} />;
 }

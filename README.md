@@ -21,8 +21,8 @@ Requirements: Node 22, Docker, Supabase CLI.
 
 ```bash
 npm install
-# storage/studio etc. are disabled in supabase/config.toml (flaky under Rosetta on this Mac)
-supabase start -x vector,logflare,imgproxy,storage-api,studio,postgres-meta,edge-runtime,supavisor
+# heavier services skipped (flaky under Rosetta on this Mac); storage is needed for profile photos
+supabase start -x vector,logflare,imgproxy,studio,postgres-meta,edge-runtime,supavisor
 supabase db reset            # applies supabase/migrations
 cp .env.example .env.local   # fill from `supabase status -o env` + `npx web-push generate-vapid-keys`
 npm run dev

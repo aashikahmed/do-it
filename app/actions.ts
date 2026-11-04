@@ -299,3 +299,58 @@ export async function sendTestPush(): Promise<ActionResult<{ sent: number }>> {
   if (!res.sent) return fail("No device is subscribed yet");
   return { ok: true, data: res };
 }
+
+// ───────────────────────── profile photo ─────────────────────────
+
+const AVATAR_BUCKET = "avatars";
+
+/** Remove this user's uploaded photos except `keep`. Best effort. */
+async function pruneUploads(userId: string, keep?: string) {
+  const store = createAdminClient().storage.from(AVATAR_BUCKET);
+  const { data } = await store.list(userId, { limit: 100 });
+  const stale = (data ?? []).map((f) => `${userId}/${f.name}`).filter((p) => p !== keep);
+  if (stale.length) await store.remove(stale);
+}
+
+async function googlePhoto(supabase: Awaited<ReturnType<typeof requireUser>>["supabase"]) {
+  const { data } = await supabase.auth.getUser();
+  const meta = data.user?.user_metadata ?? {};
+  const url = (meta.avatar_url || meta.picture || "") as string;
+  return /^https:\/\/[a-z0-9.-]+\.googleusercontent\.com\//.test(url) ? url : null;
+}
+
+/** The photo was already uploaded from the browser to avatars/<uid>/…; point the profile at it. */
+export async function setUploadedAvatar(path: string): Promise<ActionResult<{ url: string }>> {
+  const { userId } = await requireUser();
+  if (!new RegExp(`^${userId}/[A-Za-z0-9_-]{1,64}\\.(jpg|png|webp)$`).test(path)) return fail("That upload didn't work. Try another photo.");
+  const store = createAdminClient().storage.from(AVATAR_BUCKET);
+  const { data: files } = await store.list(userId, { search: path.split("/")[1], limit: 1 });
+  if (!files?.length) return fail("That upload didn't work. Try another photo.");
+  const url = store.getPublicUrl(path).data.publicUrl;
+  const { error } = await createAdminClient().from("profiles").update({ avatar_url: url }).eq("id", userId);
+  if (error) return fail(friendly(error.message));
+  after(() => pruneUploads(userId, path));
+  refresh();
+  return { ok: true, data: { url } };
+}
+
+export async function restoreGoogleAvatar(): Promise<ActionResult<{ url: string }>> {
+  const { supabase, userId } = await requireUser();
+  const url = await googlePhoto(supabase);
+  if (!url) return fail("There's no Google photo on this account");
+  const { error } = await createAdminClient().from("profiles").update({ avatar_url: url }).eq("id", userId);
+  if (error) return fail(friendly(error.message));
+  after(() => pruneUploads(userId));
+  refresh();
+  return { ok: true, data: { url } };
+}
+
+export async function removeAvatar(): Promise<ActionResult> {
+  const { userId } = await requireUser();
+  const { error } = await createAdminClient().from("profiles").update({ avatar_url: null }).eq("id", userId);
+  if (error) return fail(friendly(error.message));
+  after(() => pruneUploads(userId));
+  refresh();
+  return { ok: true };
+}
+

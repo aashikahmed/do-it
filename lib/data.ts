@@ -31,6 +31,7 @@ export interface Member {
   joined_at: string;
   left_on: Day | null;
   name: string;
+  avatar_url: string | null;
 }
 
 export interface Checkin {
@@ -62,6 +63,7 @@ export interface Me {
   id: string;
   name: string;
   timezone: string;
+  avatar_url: string | null;
 }
 
 export async function requireUser() {
@@ -99,7 +101,7 @@ async function loadBundles(supabase: SupabaseClient, pactId?: string) {
   const scope = (q: any, col: string) => (pactId ? q.eq(col, pactId) : q);
   const [pacts, members, checkins, freezes, nudges] = await Promise.all([
     scope(supabase.from("pacts").select("*"), "id"),
-    scope(supabase.from("pact_members").select("pact_id,user_id,joined_on,joined_at,left_on,profile:profiles(display_name)"), "pact_id"),
+    scope(supabase.from("pact_members").select("pact_id,user_id,joined_on,joined_at,left_on,profile:profiles(display_name,avatar_url)"), "pact_id"),
     fetchAll<Checkin>(() =>
       scope(supabase.from("checkins").select("id,pact_id,user_id,day,value,note,created_at"), "pact_id")
         .order("created_at", { ascending: false })
@@ -120,6 +122,7 @@ async function loadBundles(supabase: SupabaseClient, pactId?: string) {
         joined_at: m.joined_at as string,
         left_on: (m.left_on as Day | null) ?? null,
         name: ((m.profile as { display_name?: string } | null)?.display_name || "Someone").trim(),
+        avatar_url: (m.profile as { avatar_url?: string | null } | null)?.avatar_url ?? null,
       }))
       .sort((a, b) => a.joined_at.localeCompare(b.joined_at));
     const cs = ((checkins.data ?? []) as Checkin[]).filter((c) => c.pact_id === pact.id).map((c) => ({ ...c, value: c.value === null ? null : Number(c.value) }));
@@ -142,10 +145,10 @@ async function loadBundles(supabase: SupabaseClient, pactId?: string) {
 }
 
 export async function getMe(supabase: SupabaseClient, userId: string): Promise<Me> {
-  const { data, error } = await supabase.from("profiles").select("id,display_name,timezone").eq("id", userId).maybeSingle();
+  const { data, error } = await supabase.from("profiles").select("id,display_name,timezone,avatar_url").eq("id", userId).maybeSingle();
   // a valid token for an account that no longer exists: start over instead of looping on /welcome
   if (!error && !data) redirect("/signin");
-  return { id: userId, name: (data?.display_name ?? "").trim(), timezone: data?.timezone ?? "UTC" };
+  return { id: userId, name: (data?.display_name ?? "").trim(), timezone: data?.timezone ?? "UTC", avatar_url: data?.avatar_url ?? null };
 }
 
 export async function getHome() {

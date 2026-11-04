@@ -177,7 +177,7 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
 
           return (
             <li key={m.user_id} className="flex items-center gap-3 rounded-[18px] px-3 py-3">
-              <Avatar id={m.user_id} name={m.name} size={44} done={state.phase === "active" && done} />
+              <Avatar id={m.user_id} name={m.name} src={m.avatar_url} size={44} done={state.phase === "active" && done} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[17px] font-bold">
                   {m.name}
@@ -612,7 +612,7 @@ function Activity({ b }: { b: PactBundle }) {
       <ul>
         {items.map((c) => (
           <li key={c.id} className="flex gap-3 px-3 py-3">
-            <Avatar id={c.user_id} name={name(c.user_id)} size={34} />
+            <Avatar id={c.user_id} name={name(c.user_id)} src={b.allMembers.find((m) => m.user_id === c.user_id)?.avatar_url} size={34} />
             <div className="min-w-0 flex-1">
               <p className="text-[15px]">
                 <b>{firstName(name(c.user_id))}</b>{" "}
@@ -654,7 +654,7 @@ function Recap({ b }: { b: PactBundle }) {
       <ul className="mt-5 space-y-3">
         {per.map(({ m, count, total }) => (
           <li key={m.user_id} className="flex items-center gap-3">
-            <Avatar id={m.user_id} name={m.name} size={36} />
+            <Avatar id={m.user_id} name={m.name} src={m.avatar_url} size={36} />
             <span className="flex-1 text-[16px] font-bold">{m.name}</span>
             <span className="tnum text-right text-[15px] text-ink-2">
               {count} check-ins{pact.unit && total ? `, ${fmtNum(total)} ${pact.unit}` : ""}

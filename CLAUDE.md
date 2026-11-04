@@ -7,7 +7,8 @@
 - Every page = sync shell + `<Suspense>` around the data component. Anything reading cookies/auth goes behind Suspense; `lib/supabase/server.ts` calls `connection()` first.
 - Streak logic lives only in `lib/streak.ts` (pure, tested). SQL mirrors the rules that must be enforced (check-in window trigger, freeze cap trigger, `create_pact` freeze allowance = `freezesFor`). Keep them in sync.
 - New tables need explicit GRANTs (this Supabase version doesn't auto-grant) + RLS policies. Column-level UPDATE grants protect fields like `freezes_allowed`.
-- Local Supabase: `supabase start -x vector,logflare,imgproxy,storage-api,studio,postgres-meta,edge-runtime,supavisor` (storage is flaky under Rosetta). OTP emails → Mailpit :54324.
+- Local Supabase: `supabase start -x vector,logflare,imgproxy,studio,postgres-meta,edge-runtime,supavisor` (storage IS needed: avatars bucket). OTP emails → Mailpit :54324.
+- Profile photos: `profiles.avatar_url` is set only by server actions (Google photo or `avatars/<uid>/…` in our public bucket); client resizes to a 400px JPEG before upload.
 - Design tokens in app/globals.css (ink #10143A, mist, ultramarine, sun, ember, ice; per-pact `data-color`). Font: Bricolage Grotesque. Signature element: the chain (components/chain.tsx).
 - Copy voice: plain, sentence case, no "→", no all-caps labels.
 - Prod: doit.launchit.ae → Vercel `do-it` (fra1) + Supabase `ubdkikowagrmghxsgssi` (eu-central-1). See README "Production". Never `supabase config push` from repo config (would disable Google auth).

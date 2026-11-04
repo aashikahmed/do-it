@@ -77,7 +77,7 @@ async function Home() {
           <p className="text-[15px] font-medium text-ink-3">{formatDay(today, { weekday: "long", day: "numeric", month: "long" })}</p>
         </div>
         <Link href="/me" aria-label="Your profile and settings">
-          <Avatar id={me.id} name={me.name} size={42} />
+          <Avatar id={me.id} name={me.name} src={me.avatar_url} size={42} />
         </Link>
       </header>
 

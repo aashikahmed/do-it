@@ -31,3 +31,6 @@ export const applyFreeze = wrap(A.applyFreeze);
 export const savePushSubscription = wrap(A.savePushSubscription);
 export const removePushSubscription = wrap(A.removePushSubscription);
 export const sendTestPush = wrap(A.sendTestPush);
+export const setUploadedAvatar = wrap(A.setUploadedAvatar);
+export const restoreGoogleAvatar = wrap(A.restoreGoogleAvatar);
+export const removeAvatar = wrap(A.removeAvatar);

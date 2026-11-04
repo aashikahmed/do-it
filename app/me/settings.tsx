@@ -5,14 +5,14 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { saveProfile } from "@/lib/client-actions";
 import { Toggle } from "@/components/toggle";
-import { Avatar } from "@/components/avatar";
+import { AvatarEditor } from "@/components/avatar-editor";
 import { InstallSheet, getPlatform, usePush } from "@/components/push";
 import { toast } from "@/components/toast";
 import type { Me } from "@/lib/data";
 import { deviceTimeZone } from "@/lib/dates";
 import { getBrowserClient } from "@/lib/supabase/client";
 
-export function Settings({ me, email }: { me: Me; email: string }) {
+export function Settings({ me, email, googlePhoto }: { me: Me; email: string; googlePhoto: string | null }) {
   const router = useRouter();
   const [name, setName] = useState(me.name);
   const [saving, setSaving] = useState(false);
@@ -65,7 +65,7 @@ export function Settings({ me, email }: { me: Me; email: string }) {
       </div>
 
       <div className="flex items-center gap-4 px-1 pt-4 pb-8">
-        <Avatar id={me.id} name={name || me.name} size={64} />
+        <AvatarEditor id={me.id} name={name || me.name} src={me.avatar_url} googlePhoto={googlePhoto} />
         <div className="min-w-0">
           <h1 className="display truncate text-[40px] font-extrabold">{name || "You"}</h1>
           <p className="truncate text-[15px] text-ink-2">{email}</p>
