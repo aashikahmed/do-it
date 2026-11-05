@@ -3,8 +3,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
-import { applyFreeze, checkIn, leavePact, nudge, undoCheckIn, updateCheckIn } from "@/lib/client-actions";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { applyFreeze, checkIn, leavePact, nudge, startNextRound, undoCheckIn, updateCheckIn } from "@/lib/client-actions";
 import { Avatar } from "@/components/avatar";
 import { Burst } from "@/components/burst";
 import { Chain } from "@/components/chain";
@@ -17,14 +17,16 @@ import { toast } from "@/components/toast";
 import type { Checkin, Me, PactBundle } from "@/lib/data";
 import { diffDays, formatDay } from "@/lib/dates";
 import { cadenceText, firstName, listNames, progressText, startsText } from "@/lib/view";
-import { FEELS, formatValue, isBetter, targetText, type Feel, type Tracking } from "@/lib/measure";
+import { FEELS, formatAvg, formatValue, isBetter, progressStats, targetText, type Feel, type Tracking } from "@/lib/measure";
+import { keptCount, type Series } from "@/lib/rounds";
 import { FeelPicker, ValueInput } from "@/components/measure-input";
 import { ProgressView } from "@/components/progress-view";
 
-export function PactView({ b, me }: { b: PactBundle; me: Me }) {
+export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Series | null }) {
   const { pact, state, members } = b;
   const [menuOpen, setMenuOpen] = useState(false);
   const [burst, setBurst] = useState<{ title: string; subtitle?: string } | null>(null);
+  useFinishMoment(b, setBurst);
   const [tab, setTab] = useState<"today" | "progress">("today");
   const isSolo = members.length === 1;
 
@@ -59,7 +61,11 @@ export function PactView({ b, me }: { b: PactBundle; me: Me }) {
       <div className="space-y-3 px-4 pt-3">
         {state.repair && <RepairCard b={b} me={me.id} />}
         {state.phase === "ended" ? (
-          <Recap b={b} />
+          <>
+            <Recap b={b} me={me} />
+            <GoAgain b={b} me={me} series={series} />
+            {series && series.rounds.length > 1 && <AllRounds b={b} series={series} />}
+          </>
         ) : (
           <>
             {isSolo && <SoloInvite b={b} />}
@@ -91,7 +97,8 @@ function Hero({ b, onMenu }: { b: PactBundle; onMenu: () => void }) {
   const ended = state.phase === "ended";
   const currentIndex = state.current?.index ?? null;
   const shown = useMemo(() => chainWindow(state.periods, currentIndex), [state.periods, currentIndex]);
-  const big = ended ? state.best : state.streak;
+  const big = ended ? keptCount(state) : state.streak;
+  const unit = pact.cadence === "daily" ? "day" : "week";
 
   return (
     <section className="bg-[var(--pact)] px-5 pt-safe pb-7 text-[var(--pact-ink)]">
@@ -134,27 +141,25 @@ function Hero({ b, onMenu }: { b: PactBundle; onMenu: () => void }) {
           >
             {big}
           </motion.p>
-          <p className="mt-1 text-[17px] font-bold">
-            {pact.cadence === "daily" ? "day" : "week"} {ended ? "best streak" : "streak"}
-          </p>
+          <p className="mt-1 text-[17px] font-bold">{ended ? `of ${state.periods.length} ${unit}s kept` : `${unit} streak`}</p>
         </div>
         <dl className="space-y-1 pb-1 text-right text-[14px] font-semibold opacity-90">
           <div>
             <dt className="sr-only">Progress</dt>
             <dd>{progressText(b)}</dd>
           </div>
+          <div>
+            <dt className="sr-only">Best streak</dt>
+            <dd>{ended ? `Best streak ${state.best}` : `Best ${state.best}`}</dd>
+          </div>
           {!ended && (
             <div>
-              <dt className="sr-only">Best streak</dt>
-              <dd>Best {state.best}</dd>
+              <dt className="sr-only">Freezes</dt>
+              <dd>
+                🧊 {state.freezesLeft} {state.freezesLeft === 1 ? "freeze" : "freezes"} left
+              </dd>
             </div>
           )}
-          <div>
-            <dt className="sr-only">Freezes</dt>
-            <dd>
-              🧊 {state.freezesLeft} {state.freezesLeft === 1 ? "freeze" : "freezes"} left
-            </dd>
-          </div>
         </dl>
       </div>
 
@@ -638,29 +643,84 @@ function Activity({ b }: { b: PactBundle }) {
 
 // ───────────────────────── recap ─────────────────────────
 
-function Recap({ b }: { b: PactBundle }) {
-  const { state, pact, members } = b;
-  const kept = state.periods.filter((p) => p.status === "done" || p.status === "frozen").length;
-  const pct = Math.round((kept / state.periods.length) * 100);
+/** The first time you open a pact after it ends (within a week), it lands with a moment. */
+function useFinishMoment(b: PactBundle, show: (x: { title: string; subtitle?: string }) => void) {
+  const { pact, state } = b;
+  const recent = state.phase === "ended" && diffDays(state.endDate, b.today) <= 7;
+  const kept = keptCount(state);
+  const total = state.periods.length;
   const unit = pact.cadence === "daily" ? "days" : "weeks";
+  useEffect(() => {
+    if (!recent) return;
+    const key = `doit:finished:${pact.id}`;
+    try {
+      if (localStorage.getItem(key)) return;
+    } catch {
+      return;
+    }
+    // mark it seen only once it actually plays (effects can be set up and torn down before that)
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(key, "1");
+      } catch {}
+      show({ title: kept === total ? "Every one." : "Finished.", subtitle: `${pact.title}: ${kept} of ${total} ${unit} kept` });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [recent, pact.id, pact.title, kept, total, unit, show]);
+}
+
+function Recap({ b, me }: { b: PactBundle; me: Me }) {
+  const { state, pact, members } = b;
+  const kept = keptCount(state);
+  const total = state.periods.length;
+  const pct = Math.round((kept / total) * 100);
+  const unit = pact.cadence === "daily" ? "days" : "weeks";
+  const others = members.filter((m) => m.user_id !== me.id).map((m) => firstName(m.name));
+  const mine = b.checkins.filter((c) => c.user_id === me.id && c.value !== null).map((c) => ({ day: c.day, value: c.value as number }));
+  const stats = pact.measure !== "none" && mine.length ? progressStats(mine, pact.direction, pact.start_date) : null;
   const per = b.allMembers
     .filter((m) => members.some((x) => x.user_id === m.user_id) || b.checkins.some((c) => c.user_id === m.user_id))
     .map((m) => {
-      const mine = b.checkins.filter((c) => c.user_id === m.user_id);
-      const vals = mine.filter((c) => c.value !== null).map((c) => c.value as number);
+      const theirs = b.checkins.filter((c) => c.user_id === m.user_id);
+      const vals = theirs.filter((c) => c.value !== null).map((c) => c.value as number);
       const best = vals.length ? vals.reduce((x, v) => (isBetter(pact.direction, v, x) ? v : x), vals[0]) : null;
       const sums = pact.measure === "count" || pact.measure === "distance" || (pact.measure === "time" && pact.direction === "up");
       const extra = !vals.length || pact.measure === "none" ? "" : sums ? `, ${formatValue(pact, vals.reduce((x, v) => x + v, 0))} total` : `, best ${formatValue(pact, best!)}`;
-      return { m, count: mine.length, extra };
+      return { m, count: theirs.length, extra };
     })
     .sort((a, z) => z.count - a.count);
 
   return (
     <section className="rounded-[24px] bg-paper p-5">
-      <p className="display text-[48px] font-extrabold">{pct >= 90 ? "You did it." : pct >= 60 ? "Solid run." : "That's a wrap."}</p>
-      <p className="mt-3 text-[16px] text-ink-2">
-        {kept} of {state.periods.length} {unit} kept, with a best streak of {state.best}.
+      <p className="display text-[48px] font-extrabold">
+        {kept === total ? "Every single one." : pct >= 90 ? "You did it." : pct >= 60 ? "Solid run." : "That's a wrap."}
       </p>
+      <p className="mt-3 text-[16px] text-ink-2">
+        {kept} of {total} {unit} kept{others.length ? ` with ${listNames(others)}` : ""}. Best streak {state.best}.
+      </p>
+
+      {stats && stats.change !== null && (
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <div className="rounded-2xl bg-mist p-4">
+            <p className="text-[13px] font-semibold text-ink-2">Your first week</p>
+            <p className="display tnum mt-1 text-[26px] font-extrabold">{formatAvg(pact, stats.firstWeekAvg!)}</p>
+          </div>
+          <div className="rounded-2xl bg-[var(--pact-soft)] p-4">
+            <p className="text-[13px] font-semibold text-ink-2">Your last week</p>
+            <p className="display tnum mt-1 text-[26px] font-extrabold">{formatAvg(pact, stats.lastWeekAvg!)}</p>
+          </div>
+          <p className="col-span-2 px-1 text-[14px] font-medium text-ink-2">
+            {stats.change > 0
+              ? `${pact.direction === "down" ? "Down" : "Up"} ${formatAvg(pact, Math.abs(stats.lastWeekAvg! - stats.firstWeekAvg!))} on average, per check-in.`
+              : "Averages per check-in."}
+            {stats.best !== null ? ` Best ${formatValue(pact, stats.best)}.` : ""}
+          </p>
+        </div>
+      )}
+      {stats && stats.change === null && stats.best !== null && (
+        <p className="mt-3 text-[16px] text-ink-2">Your best: {formatValue(pact, stats.best)}.</p>
+      )}
+
       <ul className="mt-5 space-y-3">
         {per.map(({ m, count, extra }) => (
           <li key={m.user_id} className="flex items-center gap-3">
@@ -672,12 +732,108 @@ function Recap({ b }: { b: PactBundle }) {
           </li>
         ))}
       </ul>
-      <Link href="/new" className="mt-6 flex h-14 items-center justify-center rounded-2xl bg-[var(--pact)] text-[17px] font-extrabold text-[var(--pact-ink)]">
-        Start the next one
+    </section>
+  );
+}
+
+/** Go again: the next round with the same settings and the same people, or a way into it if it's already on. */
+function GoAgain({ b, me, series }: { b: PactBundle; me: Me; series: Series | null }) {
+  const { pact, members } = b;
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const inIt = members.some((m) => m.user_id === me.id);
+  const next = series?.next;
+
+  if (next) {
+    return (
+      <section className="rounded-[24px] bg-[var(--pact)] p-5 text-[var(--pact-ink)]">
+        <p className="display text-[32px] font-extrabold">Round {next.round} is on.</p>
+        <Link href={`/p/${next.id}`} className="mt-4 flex h-14 items-center justify-center rounded-2xl bg-white text-[17px] font-extrabold text-ink active:scale-[0.98]">
+          Open round {next.round}
+        </Link>
+      </section>
+    );
+  }
+  if (!inIt) return null;
+
+  const group = members.length > 1;
+  async function go() {
+    setBusy(true);
+    const res = await startNextRound(pact.id);
+    if (!res.ok) {
+      setBusy(false);
+      return toast(res.error, "error");
+    }
+    router.push(`/p/${res.data!.id}`);
+  }
+
+  return (
+    <section className="rounded-[24px] bg-[var(--pact)] p-5 text-[var(--pact-ink)]">
+      <p className="display text-[32px] font-extrabold">Go again?</p>
+      <p className="mt-2 text-[16px] font-medium opacity-85">
+        Round {pact.round + 1}: same pact{group ? ", same people" : ""}, starting today. {cadenceText(pact)}.
+      </p>
+      <button
+        onClick={go}
+        disabled={busy}
+        className="mt-5 flex h-14 w-full items-center justify-center rounded-2xl bg-white text-[17px] font-extrabold text-ink transition-transform active:scale-[0.98] disabled:opacity-70"
+      >
+        {busy ? "Starting…" : "Go again"}
+      </button>
+      {group && <p className="mt-3 text-center text-[13px] font-medium opacity-75">Everyone still in it comes along and gets a heads-up.</p>}
+      <Link href="/new" className="mt-2 flex h-11 items-center justify-center text-[15px] font-bold underline-offset-4 opacity-90 hover:underline">
+        Start something new
       </Link>
     </section>
   );
 }
+
+/** Lifetime totals once a pact has more than one round. */
+function AllRounds({ b, series }: { b: PactBundle; series: Series }) {
+  const { pact } = b;
+  const unit = pact.cadence === "daily" ? "days" : "weeks";
+  const n = series.rounds.length;
+  return (
+    <section className="rounded-[24px] bg-paper p-5">
+      <h2 className="text-[17px] font-extrabold">All rounds</h2>
+      <p className="display tnum mt-3 text-[44px] font-extrabold">{series.kept}</p>
+      <p className="text-[16px] font-semibold text-ink-2">
+        {unit} kept across {n} rounds. Best streak {series.best}.
+      </p>
+      {series.mine && (
+        <p className="mt-3 text-[15px] text-ink-2">
+          You went from {formatAvg(pact, series.mine.from)} to {formatAvg(pact, series.mine.to)} on average since round {series.rounds[0].round}.
+        </p>
+      )}
+      <ul className="mt-4 divide-y divide-line">
+        {series.rounds.map((r) => {
+          const here = r.id === pact.id;
+          const row = (
+            <>
+              <span className={`text-[15px] font-bold ${here ? "" : "text-ink-2"}`}>Round {r.round}</span>
+              <span className="flex-1 text-[14px] text-ink-3">{formatDay(r.start, { day: "numeric", month: "short" })}</span>
+              <span className="tnum text-[15px] font-semibold">
+                {r.kept} of {r.total}
+              </span>
+            </>
+          );
+          return (
+            <li key={r.id}>
+              {here ? (
+                <div className="flex items-center gap-3 py-3">{row}</div>
+              ) : (
+                <Link href={`/p/${r.id}`} className="flex items-center gap-3 py-3">
+                  {row}
+                </Link>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 
 // ───────────────────────── menu ─────────────────────────
 

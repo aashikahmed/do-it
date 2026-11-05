@@ -23,6 +23,7 @@ export const saveProfile = wrap(A.saveProfile);
 export const createPact = wrap(A.createPact);
 export const joinPact = wrap(A.joinPact);
 export const leavePact = wrap(A.leavePact);
+export const startNextRound = wrap(A.startNextRound);
 export const checkIn = wrap(A.checkIn);
 export const updateCheckIn = wrap(A.updateCheckIn);
 export const undoCheckIn = wrap(A.undoCheckIn);

@@ -5,6 +5,7 @@ import { createClient } from "./supabase/server";
 import { addDays, todayIn, type Day } from "./dates";
 import { computePactState, type Cadence, type PactState } from "./streak";
 import type { Direction, Measure } from "./measure";
+import { buildSeries, seriesIds, type RoundLink, type Series } from "./rounds";
 
 export type PactColor = "blue" | "sun" | "ember" | "mint" | "violet" | "rose";
 
@@ -26,6 +27,9 @@ export interface Pact {
   invite_code: string;
   created_by: string;
   created_at: string;
+  /** the round this one follows ("Go again"); null for a first round */
+  previous_id: string | null;
+  round: number;
 }
 
 export interface Member {
@@ -100,9 +104,9 @@ export async function fetchAll<T>(build: () => any): Promise<{ data: T[]; error:
 }
 
 /** Load pacts plus everything needed to render them in one parallel round-trip (RLS scopes to the caller's pacts). */
-async function loadBundles(supabase: SupabaseClient, pactId?: string) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrows any query builder to one pact
-  const scope = (q: any, col: string) => (pactId ? q.eq(col, pactId) : q);
+async function loadBundles(supabase: SupabaseClient, pactIds?: string | string[]) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrows any query builder to the given pacts
+  const scope = (q: any, col: string) => (pactIds === undefined ? q : typeof pactIds === "string" ? q.eq(col, pactIds) : q.in(col, pactIds));
   const [pacts, members, checkins, freezes, nudges] = await Promise.all([
     scope(supabase.from("pacts").select("*"), "id"),
     scope(supabase.from("pact_members").select("pact_id,user_id,joined_on,joined_at,left_on,profile:profiles(display_name,avatar_url)"), "pact_id"),
@@ -163,11 +167,21 @@ export async function getHome() {
   return { me, bundles };
 }
 
-export async function getPact(id: string) {
+export async function getPact(id: string): Promise<{ me: Me; bundle: PactBundle | null; series: Series | null }> {
   const { supabase, userId } = await requireUser();
-  if (!/^[0-9a-f-]{36}$/i.test(id)) return { me: await getMe(supabase, userId), bundle: null };
-  const [me, bundles] = await Promise.all([getMe(supabase, userId), loadBundles(supabase, id)]);
-  return { me, bundle: bundles[0] ?? null };
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return { me: await getMe(supabase, userId), bundle: null, series: null };
+  const [me, bundles, links] = await Promise.all([
+    getMe(supabase, userId),
+    loadBundles(supabase, id),
+    supabase.from("pacts").select("id,previous_id,round").returns<RoundLink[]>(),
+  ]);
+  const bundle = bundles[0] ?? null;
+  if (!bundle) return { me, bundle, series: null };
+  // other rounds of the same pact (Go again): one more round-trip, only when there are any
+  const ids = seriesIds(links.data ?? [], id);
+  if (ids.length < 2) return { me, bundle, series: null };
+  const others = await loadBundles(supabase, ids.filter((x) => x !== id));
+  return { me, bundle, series: buildSeries([bundle, ...others], ids, id, userId) };
 }
 
 export async function getPactForUser(supabase: SupabaseClient, id: string) {

@@ -35,10 +35,11 @@ export function startsText(start: string, today: string) {
 export function progressText(b: PactBundle) {
   const { state, pact } = b;
   if (state.phase === "upcoming") return startsText(pact.start_date, b.today);
-  if (state.phase === "ended") return "Finished";
-  if (pact.cadence === "daily") return `Day ${state.dayNumber} of ${pact.duration_days}`;
-  const week = (state.current?.index ?? 0) + 1;
-  return `Week ${week} of ${state.periods.length}`;
+  const round = pact.round > 1 ? `Round ${pact.round}` : "";
+  if (state.phase === "ended") return round ? `${round} finished` : "Finished";
+  const where =
+    pact.cadence === "daily" ? `day ${state.dayNumber} of ${pact.duration_days}` : `week ${(state.current?.index ?? 0) + 1} of ${state.periods.length}`;
+  return round ? `${round}, ${where}` : where[0].toUpperCase() + where.slice(1);
 }
 
 export type Tone = "act" | "wait" | "done" | "info" | "risk";

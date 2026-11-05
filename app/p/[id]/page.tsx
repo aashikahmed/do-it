@@ -13,10 +13,10 @@ export default function Page({ params }: PageProps<"/p/[id]">) {
 
 async function PactScreen({ params }: { params: PageProps<"/p/[id]">["params"] }) {
   const { id } = await params;
-  const { me, bundle } = await getPact(id);
+  const { me, bundle, series } = await getPact(id);
   if (!me.name) redirect(`/welcome?next=/p/${id}`);
   if (!bundle) notFound();
-  return <PactView b={bundle} me={me} />;
+  return <PactView key={bundle.pact.id} b={bundle} me={me} series={series} />;
 }
 
 function PactSkeleton() {

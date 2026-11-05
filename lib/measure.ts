@@ -52,6 +52,11 @@ export function formatValue(t: Pick<Tracking, "measure" | "unit">, v: number) {
   }
 }
 
+/** An average for sentences: whole numbers for counts ("37 push-ups", not "36.62 push-ups"). */
+export function formatAvg(t: Pick<Tracking, "measure" | "unit">, v: number) {
+  return formatValue(t, t.measure === "count" ? Math.round(v) : v);
+}
+
 /** Short value for chart axes and stat tiles (no unit). */
 export function formatShort(t: Pick<Tracking, "measure">, v: number) {
   return t.measure === "time" ? formatDuration(v) : num(v, t.measure === "count" ? 0 : 1);

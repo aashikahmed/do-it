@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { addDays, diffDays, hourIn, todayIn } from "@/lib/dates";
 import { computePactState } from "@/lib/streak";
+import { keptCount } from "@/lib/rounds";
 import { sendPush } from "@/lib/push";
 import { fetchAll, type Pact } from "@/lib/data";
 
@@ -10,6 +11,8 @@ import { fetchAll, type Pact } from "@/lib/data";
  * sent on the first run at or after 8pm in the pact's timezone.
  */
 const REMIND_FROM_HOUR = 20;
+/** "You finished" goes out the morning after the last day (a second day of slack covers a missed run). */
+const FINISH_FROM_HOUR = 9;
 
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -35,9 +38,15 @@ export async function GET(req: NextRequest) {
     const end = addDays(p.start_date, p.duration_days - 1);
     return today >= p.start_date && today <= end && hourIn(p.timezone, now) >= REMIND_FROM_HOUR;
   });
-  if (!due.length) return NextResponse.json({ checked: 0, sent: 0 });
+  const all = (pacts ?? []) as Pact[];
+  const finished = all.filter((p) => {
+    const since = diffDays(addDays(p.start_date, p.duration_days - 1), todayIn(p.timezone, now));
+    // skip if someone already tapped Go again: they got the new-round push instead
+    return since >= 1 && since <= 2 && (since === 2 || hourIn(p.timezone, now) >= FINISH_FROM_HOUR) && !all.some((x) => x.previous_id === p.id);
+  });
+  if (!due.length && !finished.length) return NextResponse.json({ checked: 0, sent: 0 });
 
-  const ids = due.map((p) => p.id);
+  const ids = [...due, ...finished].map((p) => p.id);
   type M = { pact_id: string; user_id: string; joined_on: string; left_on: string | null; profile: unknown };
   const [{ data: members }, { data: checkins }, { data: freezes }] = await Promise.all([
     fetchAll<M>(() => admin.from("pact_members").select("pact_id,user_id,joined_on,left_on,profile:profiles(display_name)").in("pact_id", ids).order("pact_id").order("user_id")),
@@ -82,5 +91,33 @@ export async function GET(req: NextRequest) {
     sent += res.sent;
   }
 
-  return NextResponse.json({ checked: due.length, sent });
+  for (const pact of finished) {
+    const ms = (members ?? []).filter((m) => m.pact_id === pact.id);
+    const active = ms.filter((m) => !m.left_on);
+    if (!active.length) continue;
+    const end = addDays(pact.start_date, pact.duration_days - 1);
+    const { data: claimed } = await admin
+      .from("checkin_notify_log")
+      .upsert(active.map((m) => ({ pact_id: pact.id, user_id: m.user_id, day: end, kind: "finished" })), {
+        onConflict: "pact_id,user_id,day,kind",
+        ignoreDuplicates: true,
+      })
+      .select("user_id");
+    const targets = (claimed ?? []).map((r) => r.user_id as string);
+    if (!targets.length) continue;
+    const cs = (checkins ?? []).filter((c) => c.pact_id === pact.id);
+    const state = computePactState(pact, ms, cs, (freezes ?? []).filter((f) => f.pact_id === pact.id).map((f) => f.period_start), todayIn(pact.timezone, now));
+    const kept = keptCount(state);
+    const unit = pact.cadence === "daily" ? "days" : "weeks";
+    const who = active.length > 1 ? "Together you kept" : "You kept";
+    const res = await sendPush(targets, {
+      title: `${pact.emoji} ${state.periods.length} ${unit} of ${pact.title}, done`,
+      body: `${who} ${kept} of ${state.periods.length}. Go again?`,
+      url: `/p/${pact.id}`,
+      tag: `pact-${pact.id}`,
+    });
+    sent += res.sent;
+  }
+
+  return NextResponse.json({ checked: due.length + finished.length, sent });
 }

@@ -5,6 +5,7 @@
 - Shared-streak pacts PWA. Read README.md for the product rules (chain, freezes, grace day, timezones).
 - Stack: Next.js 16 (Cache Components ON, Partial Prefetching ON), Supabase, web-push. Mobile-only UI (440px column).
 - Every page = sync shell + `<Suspense>` around the data component. Anything reading cookies/auth goes behind Suspense; `lib/supabase/server.ts` calls `connection()` first.
+- Rounds: "Go again" = `start_next_round()` RPC → new pact with `previous_id`/`round`; lifetime totals in `lib/rounds.ts`. Home hides a finished round once it has a next round.
 - Streak logic lives only in `lib/streak.ts` (pure, tested). SQL mirrors the rules that must be enforced (check-in window trigger, freeze cap trigger, `create_pact` freeze allowance = `freezesFor`). Keep them in sync.
 - New tables need explicit GRANTs (this Supabase version doesn't auto-grant) + RLS policies. Column-level UPDATE grants protect fields like `freezes_allowed`.
 - Local Supabase: `supabase start -x vector,logflare,imgproxy,studio,postgres-meta,edge-runtime,supavisor` (storage IS needed: avatars bucket). OTP emails → Mailpit :54324.

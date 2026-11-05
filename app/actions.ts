@@ -34,6 +34,7 @@ function friendly(msg: string | undefined) {
     "You left this pact, so you can't rejoin it",
     "There's nothing to freeze right now",
     "Pact not found",
+    "This pact is still going",
   ];
   const hit = known.find((k) => msg.includes(k));
   if (hit) return hit;
@@ -143,6 +144,37 @@ export async function leavePact(pactId: string): Promise<ActionResult> {
     if (error) return fail(friendly(error.message));
   }
   return { ok: true };
+}
+
+/** "Go again": start the next round of a finished pact with the same settings and everyone still in it. */
+export async function startNextRound(pactId: string): Promise<ActionResult<{ id: string }>> {
+  if (!uuid.safeParse(pactId).success) return fail("Pact not found");
+  const { supabase, userId } = await requireUser();
+  const { data: existing } = await supabase.from("pacts").select("id").eq("previous_id", pactId).maybeSingle();
+  if (existing) return { ok: true, data: { id: existing.id as string } };
+  const { data: id, error } = await supabase.rpc("start_next_round", { p_prev: pactId });
+  if (error || !id) return fail(friendly(error?.message));
+  after(async () => {
+    const admin = createAdminClient();
+    const [{ data: pact }, { data: members }, name] = await Promise.all([
+      admin.from("pacts").select("title,emoji,round,created_by").eq("id", id).single(),
+      admin.from("pact_members").select("user_id").eq("pact_id", id).is("left_on", null),
+      displayName(userId),
+    ]);
+    // a racing tap returns the round someone else made; only its creator announces it
+    if (!pact || pact.created_by !== userId) return;
+    await sendPush(
+      (members ?? []).map((m) => m.user_id).filter((u) => u !== userId),
+      {
+        title: `${pact.emoji} Round ${pact.round} of ${pact.title} is on`,
+        body: `${name.split(" ")[0]} started it. You're in, starting today.`,
+        url: `/p/${id}`,
+        tag: `pact-${id}`,
+      },
+    );
+  });
+  refresh();
+  return { ok: true, data: { id: id as string } };
 }
 
 // ───────────────────────── check-ins ─────────────────────────
