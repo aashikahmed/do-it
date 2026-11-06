@@ -20,6 +20,7 @@ import { diffDays, formatDay } from "@/lib/dates";
 import { cadenceText, firstName, listNames, progressText, startsText } from "@/lib/view";
 import { FEELS, formatAvg, formatValue, isBetter, progressStats, targetText, type Feel, type Tracking } from "@/lib/measure";
 import { keptCount, type Series } from "@/lib/rounds";
+import { logAvatarTap } from "@/lib/track";
 import { FeelPicker, ValueInput } from "@/components/measure-input";
 import { ProgressView } from "@/components/progress-view";
 
@@ -74,7 +75,7 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
             <Roster b={b} me={me} />
           </>
         )}
-        <Activity b={b} />
+        <Activity b={b} me={me} />
       </div>
       )}
 
@@ -214,7 +215,14 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
 
           return (
             <li key={m.user_id} className="flex items-center gap-3 rounded-[18px] px-3 py-3">
-              <Avatar id={m.user_id} name={m.name} src={m.avatar_url} size={44} done={state.phase === "active" && done} />
+              <Avatar
+                id={m.user_id}
+                name={m.name}
+                src={m.avatar_url}
+                size={44}
+                done={state.phase === "active" && done}
+                onTap={isMe ? undefined : () => logAvatarTap(pact.id, m.user_id)}
+              />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[17px] font-bold">
                   {m.name}
@@ -611,7 +619,7 @@ function SoloInvite({ b }: { b: PactBundle }) {
 
 // ───────────────────────── activity ─────────────────────────
 
-function Activity({ b }: { b: PactBundle }) {
+function Activity({ b, me }: { b: PactBundle; me: Me }) {
   const items = b.checkins.slice(0, 20);
   if (!items.length) return null;
   const name = (id: string) => b.allMembers.find((m) => m.user_id === id)?.name ?? "Former member";
@@ -623,7 +631,13 @@ function Activity({ b }: { b: PactBundle }) {
       <ul>
         {items.map((c) => (
           <li key={c.id} className="flex gap-3 px-3 py-3">
-            <Avatar id={c.user_id} name={name(c.user_id)} src={b.allMembers.find((m) => m.user_id === c.user_id)?.avatar_url} size={34} />
+            <Avatar
+              id={c.user_id}
+              name={name(c.user_id)}
+              src={b.allMembers.find((m) => m.user_id === c.user_id)?.avatar_url}
+              size={34}
+              onTap={c.user_id === me.id ? undefined : () => logAvatarTap(b.pact.id, c.user_id)}
+            />
             <div className="min-w-0 flex-1">
               <p className="text-[15px]">
                 <b>{firstName(name(c.user_id))}</b>{" "}
@@ -725,7 +739,7 @@ function Recap({ b, me }: { b: PactBundle; me: Me }) {
       <ul className="mt-5 space-y-3">
         {per.map(({ m, count, extra }) => (
           <li key={m.user_id} className="flex items-center gap-3">
-            <Avatar id={m.user_id} name={m.name} src={m.avatar_url} size={36} />
+            <Avatar id={m.user_id} name={m.name} src={m.avatar_url} size={36} onTap={m.user_id === me.id ? undefined : () => logAvatarTap(pact.id, m.user_id)} />
             <span className="flex-1 text-[16px] font-bold">{m.name}</span>
             <span className="tnum text-right text-[15px] text-ink-2">
               {count} check-ins{extra}

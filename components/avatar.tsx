@@ -29,6 +29,7 @@ export function Avatar({
   size = 36,
   ring,
   done,
+  onTap,
 }: {
   id: string;
   name: string;
@@ -39,12 +40,14 @@ export function Avatar({
   ring?: string;
   /** show a check badge */
   done?: boolean;
+  /** silent tap handler (used for logging; avatars have no tap action of their own) */
+  onTap?: () => void;
 }) {
   const [failed, setFailed] = useState<string | null>(null);
   const showPhoto = !!src && failed !== src;
 
   return (
-    <span className="relative inline-flex shrink-0" style={{ width: size, height: size }}>
+    <span className="relative inline-flex shrink-0" style={{ width: size, height: size }} onClick={onTap}>
       <span
         aria-hidden
         className="flex h-full w-full items-center justify-center overflow-hidden rounded-full font-bold text-white"
