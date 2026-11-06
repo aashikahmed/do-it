@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BottomDock } from "@/components/bottom-dock";
 import { Suspense } from "react";
 import { getHome, optionalUser } from "@/lib/data";
 import { needsMe } from "@/lib/view";
@@ -68,7 +69,7 @@ async function Home() {
   const greeting = h < 5 ? "Up late" : h < 12 ? "Morning" : h < 18 ? "Afternoon" : "Evening";
 
   return (
-    <main className="min-h-dvh px-4 pt-safe pb-[120px]">
+    <main className="min-h-dvh px-4 pt-safe pb-4">
       <Live pactIds={bundles.map((b) => b.pact.id)} days={bundles.map((b) => ({ tz: b.pact.timezone, today: b.today }))} />
       <header className="flex items-center justify-between px-1 pt-3 pb-5">
         <div>
@@ -109,7 +110,7 @@ async function Home() {
       )}
 
       {bundles.length > 0 && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 mx-auto flex max-w-[440px] justify-center px-4 pb-safe">
+        <BottomDock className="pointer-events-none flex justify-center px-4 pt-3 pb-safe" estimate={90}>
           <Link
             href="/new"
             className="pointer-events-auto flex h-14 items-center gap-2 rounded-full bg-ink px-6 text-[17px] font-extrabold text-white shadow-[0_16px_36px_-12px_rgba(16,20,58,0.6)] active:scale-95"
@@ -119,7 +120,7 @@ async function Home() {
             </svg>
             New pact
           </Link>
-        </div>
+        </BottomDock>
       )}
     </main>
   );

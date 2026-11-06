@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { applyFreeze, checkIn, leavePact, nudge, startNextRound, undoCheckIn, updateCheckIn } from "@/lib/client-actions";
 import { Avatar } from "@/components/avatar";
 import { Burst } from "@/components/burst";
+import { BottomDock } from "@/components/bottom-dock";
 import { Chain } from "@/components/chain";
 import { HoldButton } from "@/components/hold-button";
 import { Live } from "@/components/live";
@@ -31,7 +32,7 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
   const isSolo = members.length === 1;
 
   return (
-    <main data-color={pact.color} className="min-h-dvh pb-[200px]">
+    <main data-color={pact.color} className="min-h-dvh pb-6">
       <Live pactIds={[pact.id]} days={[{ tz: pact.timezone, today: b.today }]} />
       <Hero b={b} onMenu={() => setMenuOpen(true)} />
 
@@ -79,9 +80,9 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
 
       {state.phase === "active" && <ActionBar b={b} me={me} onCelebrate={setBurst} />}
       {state.phase === "upcoming" && (
-        <div className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-[440px] bg-gradient-to-t from-mist via-mist to-transparent px-4 pt-10 pb-safe">
+        <BottomDock className="bg-gradient-to-t from-mist via-mist to-transparent px-4 pt-10 pb-safe" estimate={110}>
           <div className="rounded-[22px] bg-paper p-4 text-center text-[17px] font-bold">{startsText(pact.start_date, b.today)}. Check-ins open then.</div>
-        </div>
+        </BottomDock>
       )}
 
       <MenuSheet b={b} me={me} open={menuOpen} onClose={() => setMenuOpen(false)} />
@@ -354,7 +355,7 @@ function ActionBar({ b, me, onCelebrate }: { b: PactBundle; me: Me; onCelebrate:
   }
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-[440px] bg-gradient-to-t from-mist via-mist/95 to-transparent px-4 pt-10 pb-safe">
+    <BottomDock className="bg-gradient-to-t from-mist via-mist/95 to-transparent px-4 pt-10 pb-safe" estimate={tracked ? 280 : 200}>
       <AnimatePresence mode="wait" initial={false}>
         {mineToday ? (
           <motion.div
@@ -421,7 +422,7 @@ function ActionBar({ b, me, onCelebrate }: { b: PactBundle; me: Me; onCelebrate:
 
       {mineToday && <EditSheet b={b} c={mineToday} open={editOpen} onClose={() => setEditOpen(false)} />}
       <BackfillSheet b={b} me={me.id} open={backfillOpen} onClose={() => setBackfillOpen(false)} />
-    </div>
+    </BottomDock>
   );
 }
 
