@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import { ServiceWorker } from "@/components/service-worker";
 import { Toaster } from "@/components/toast";
 import "./globals.css";
@@ -40,6 +41,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         </div>
         <Toaster />
         <ServiceWorker />
+        <Analytics />
       </body>
     </html>
   );
