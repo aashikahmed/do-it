@@ -35,7 +35,7 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
             role="dialog"
             aria-modal="true"
             aria-labelledby={title ? titleId : undefined}
-            className="relative max-h-[88dvh] overflow-y-auto rounded-t-[28px] bg-paper px-5 pt-3 pb-safe shadow-[0_-20px_60px_-20px_rgba(16,20,58,0.4)]"
+            className="relative max-h-[88dvh] overflow-y-auto rounded-t-[28px] bg-paper px-5 pt-3 pb-safe text-left text-ink shadow-[0_-20px_60px_-20px_rgba(16,20,58,0.4)]"
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}

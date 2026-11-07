@@ -24,7 +24,8 @@ export function Burst({ show, title, subtitle, onDone }: { show: boolean; title:
       {show && (
         <motion.div
           key="burst"
-          className="fixed inset-0 z-[90] mx-auto flex max-w-[440px] items-center justify-center text-[var(--pact-ink)]"
+          // solid pact color first; the translucent mix overrides it where supported (iOS 16.2+)
+          className="fixed inset-0 z-[90] mx-auto flex max-w-[440px] items-center justify-center bg-[var(--pact)] text-[var(--pact-ink)]"
           style={{ background: "color-mix(in srgb, var(--pact) 94%, transparent)" }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

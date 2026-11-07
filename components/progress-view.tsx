@@ -246,10 +246,12 @@ function Chart({ b, t, series }: { b: PactBundle; t: Tracking; series: { id: str
 
 // ───────────────────────── feel calendar ─────────────────────────
 
-const FEEL_BG: Record<number, string> = {
-  1: "color-mix(in srgb, var(--pact) 28%, var(--color-mist))",
-  2: "color-mix(in srgb, var(--pact) 60%, var(--color-mist))",
-  3: "var(--pact)",
+// tints of the pact color as a mist wash over it (works on every iOS, unlike color-mix)
+const wash = (a: number) => `linear-gradient(rgba(238, 240, 248, ${a}), rgba(238, 240, 248, ${a}))`;
+const FEEL_BG: Record<number, React.CSSProperties> = {
+  1: { backgroundColor: "var(--pact)", backgroundImage: wash(0.72) },
+  2: { backgroundColor: "var(--pact)", backgroundImage: wash(0.4) },
+  3: { backgroundColor: "var(--pact)" },
 };
 
 function FeelCalendar({ b, checkins }: { b: PactBundle; checkins: Checkin[] }) {
@@ -280,7 +282,7 @@ function FeelCalendar({ b, checkins }: { b: PactBundle; checkins: Checkin[] }) {
                 title={`${formatDay(d)}: ${label}`}
                 className="flex aspect-square items-center justify-center rounded-[9px] text-[11px] font-bold"
                 style={{
-                  background: c ? (c.feel ? FEEL_BG[c.feel] : "var(--pact-soft)") : "transparent",
+                  ...(c ? (c.feel ? FEEL_BG[c.feel] : { backgroundColor: "var(--pact-soft)" }) : { backgroundColor: "transparent" }),
                   boxShadow: c ? undefined : "inset 0 0 0 1.5px var(--color-line)",
                   color: c?.feel === 3 ? "var(--pact-ink)" : "var(--color-ink-3)",
                 }}
@@ -294,7 +296,7 @@ function FeelCalendar({ b, checkins }: { b: PactBundle; checkins: Checkin[] }) {
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] font-bold text-ink-3">
         {FEELS.map((f) => (
           <span key={f.value} className="flex items-center gap-1.5">
-            <i className="inline-block h-3 w-3 rounded-[4px]" style={{ background: FEEL_BG[f.value] }} />
+            <i className="inline-block h-3 w-3 rounded-[4px]" style={FEEL_BG[f.value]} />
             {f.label}
           </span>
         ))}
