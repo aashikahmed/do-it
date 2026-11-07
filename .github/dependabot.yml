@@ -1,0 +1,7 @@
+# Keeps the pinned action versions in ci.yml current. npm security fixes come from Dependabot security updates.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

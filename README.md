@@ -22,7 +22,7 @@ Requirements: Node 22, Docker, Supabase CLI.
 
 ```bash
 npm install
-# heavier services skipped (flaky under Rosetta on this Mac); storage is needed for profile photos
+# skips heavier services you don't need; storage is needed for profile photos
 supabase start -x vector,logflare,imgproxy,studio,postgres-meta,edge-runtime,supavisor
 supabase db reset            # applies supabase/migrations
 cp .env.example .env.local   # fill from `supabase status -o env` + `npx web-push generate-vapid-keys`
@@ -37,7 +37,17 @@ npm run lint
 npm run build
 ```
 
+## Contributing
+
+Help is welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Report security problems privately: see [SECURITY.md](SECURITY.md).
+
+## Licence
+
+[GNU AGPL v3](LICENSE). If you run a modified copy as a service, you need to publish your changes under the same licence.
+
 ## Production
+
+Maintainer notes. Contributors don't need any of this.
 
 - App: https://doit.launchit.ae (Vercel project `do-it`, functions pinned to `fra1`), fallback https://do-it-omega-puce.vercel.app
 - Supabase project `do-it` (`ubdkikowagrmghxsgssi`, eu-central-1). DB password in `.env.production.local` (gitignored).
