@@ -3,6 +3,7 @@ import type { Period, PeriodStatus } from "@/lib/streak";
 /**
  * The chain: one link per period. Links overlap like a real chain.
  * done = closed link · frozen = ice link · missed = broken link · open = breathing dashed link · upcoming = faint.
+ * late = yesterday, still fixable: a broken link with a breathing gap. A link closed by a make-up gets a small stitch.
  */
 const W = 40;
 const H = 26;
@@ -18,7 +19,7 @@ export function Chain({
   label,
   fluid,
 }: {
-  periods: Pick<Period, "status" | "start" | "index">[];
+  periods: (Pick<Period, "status" | "start" | "index"> & { madeUp?: boolean })[];
   perRow?: number;
   tone?: "onColor" | "onLight";
   size?: number;
@@ -33,7 +34,7 @@ export function Chain({
   const counts = periods.reduce<Record<string, number>>((a, p) => ((a[p.status] = (a[p.status] ?? 0) + 1), a), {});
   const summary =
     label ??
-    `${counts.done ?? 0} closed, ${counts.frozen ?? 0} frozen, ${counts.missed ?? 0} missed, ${counts.upcoming ?? 0} to go`;
+    `${counts.done ?? 0} closed, ${counts.frozen ?? 0} frozen, ${counts.missed ?? 0} missed, ${counts.late ? `${counts.late} still open from yesterday, ` : ""}${counts.upcoming ?? 0} to go`;
 
   return (
     <svg
@@ -47,7 +48,7 @@ export function Chain({
     >
       {rows.map((row, r) =>
         row.map((p, i) => (
-          <Link key={p.index} x={i * STEP} y={r * ROW} status={p.status} tone={tone} />
+          <Link key={p.index} x={i * STEP} y={r * ROW} status={p.status} tone={tone} madeUp={p.madeUp} />
         )),
       )}
     </svg>
@@ -63,6 +64,8 @@ function colors(status: PeriodStatus, tone: "onColor" | "onLight") {
         return { stroke: "var(--color-ice)", opacity: 1 };
       case "missed":
         return { stroke: "#ffffff", opacity: 0.4 };
+      case "late":
+        return { stroke: "#ffffff", opacity: 1 };
       case "open":
         return { stroke: "#ffffff", opacity: 0.95 };
       default:
@@ -76,6 +79,8 @@ function colors(status: PeriodStatus, tone: "onColor" | "onLight") {
       return { stroke: "#58b9f5", opacity: 1 };
     case "missed":
       return { stroke: "var(--color-ink-3)", opacity: 0.55 };
+    case "late":
+      return { stroke: "var(--color-ember)", opacity: 1 };
     case "open":
       return { stroke: "var(--pact)", opacity: 0.9 };
     default:
@@ -83,7 +88,7 @@ function colors(status: PeriodStatus, tone: "onColor" | "onLight") {
   }
 }
 
-function Link({ x, y, status, tone }: { x: number; y: number; status: PeriodStatus; tone: "onColor" | "onLight" }) {
+function Link({ x, y, status, tone, madeUp }: { x: number; y: number; status: PeriodStatus; tone: "onColor" | "onLight"; madeUp?: boolean }) {
   const { stroke, opacity } = colors(status, tone);
   const rx = W / 2 - SW / 2;
   const ry = H / 2 - SW / 2;
@@ -91,7 +96,7 @@ function Link({ x, y, status, tone }: { x: number; y: number; status: PeriodStat
   const c = Math.PI * (3 * (rx + ry) - Math.sqrt((3 * rx + ry) * (rx + 3 * ry)));
   let dash: string | undefined;
   let offset: number | undefined;
-  if (status === "missed") {
+  if (status === "missed" || status === "late") {
     // two clean breaks, top-right and bottom-left
     dash = `${c * 0.4} ${c * 0.1}`;
     offset = c * 0.2;
@@ -99,9 +104,14 @@ function Link({ x, y, status, tone }: { x: number; y: number; status: PeriodStat
     dash = `${c / 14} ${c / 28}`;
   }
   return (
-    <g transform={`translate(${x + W / 2} ${y + H / 2})`} opacity={opacity} className={status === "open" ? "link-open" : undefined}>
+    <g transform={`translate(${x + W / 2} ${y + H / 2})`} opacity={opacity} className={status === "open" || status === "late" ? "link-open" : undefined}>
       <ellipse rx={rx} ry={ry} fill="none" stroke={stroke} strokeWidth={SW} strokeDasharray={dash} strokeDashoffset={offset} strokeLinecap="round" />
       {status === "frozen" && <path d="M0 -4.5 V4.5 M-3.9 -2.25 L3.9 2.25 M-3.9 2.25 L3.9 -2.25" stroke={stroke} strokeWidth={1.6} strokeLinecap="round" />}
+      {status === "late" && <circle r={2.6} fill={stroke} />}
+      {status === "done" && madeUp && (
+        // a stitch across the top-right and bottom-left, where a broken link would have its gaps
+        <path d={`M${rx * 0.42} ${-ry - 4.2} l3.2 6.4 M${-rx * 0.42} ${ry + 4.2} l-3.2 -6.4`} stroke={stroke} strokeWidth={2.2} strokeLinecap="round" />
+      )}
     </g>
   );
 }

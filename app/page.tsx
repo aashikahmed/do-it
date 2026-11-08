@@ -2,7 +2,7 @@ import Link from "next/link";
 import { BottomDock } from "@/components/bottom-dock";
 import { Suspense } from "react";
 import { getHome, optionalUser } from "@/lib/data";
-import { needsMe } from "@/lib/view";
+import { needsMe, owesMakeUp } from "@/lib/view";
 import { formatDay, todayIn } from "@/lib/dates";
 import { Avatar } from "@/components/avatar";
 import { PactCard } from "@/components/pact-card";
@@ -53,14 +53,15 @@ async function Home() {
   const { me, bundles } = await getHome();
   if (!me.name) redirect("/welcome");
 
-  const active = bundles.filter((b) => b.state.phase !== "ended");
+  // a pact that ended yesterday stays up top while its last day can still be made up
+  const active = bundles.filter((b) => b.state.phase !== "ended" || owesMakeUp(b, me.id));
   // a finished round that someone already continued lives on as the next round
-  const ended = bundles.filter((b) => b.state.phase === "ended" && !bundles.some((x) => x.pact.previous_id === b.pact.id));
+  const ended = bundles.filter((b) => !active.includes(b) && b.state.phase === "ended" && !bundles.some((x) => x.pact.previous_id === b.pact.id));
   const rank = (b: (typeof bundles)[number]) =>
-    b.state.repair ? 0 : needsMe(b, me.id) ? 1 : b.state.phase === "active" ? 2 : 3;
+    owesMakeUp(b, me.id) || b.state.repair ? 0 : needsMe(b, me.id) ? 1 : b.state.phase === "active" ? 2 : 3;
   active.sort((a, b) => rank(a) - rank(b) || a.pact.created_at.localeCompare(b.pact.created_at));
 
-  const todo = active.filter((b) => needsMe(b, me.id) || !!b.state.repair).length;
+  const todo = active.filter((b) => needsMe(b, me.id) || owesMakeUp(b, me.id) || !!b.state.repair).length;
   const live = active.filter((b) => b.state.phase === "active").length;
   const partner = active.flatMap((b) => b.members).find((m) => m.user_id !== me.id)?.name.split(" ")[0];
   const today = todayIn(me.timezone);
@@ -88,7 +89,7 @@ async function Home() {
       ) : (
         <>
           <h1 className="display px-1 pb-6 text-[56px] font-extrabold">
-            {active.length === 0 ? "All wrapped up." : live === 0 ? "Get ready." : todo === 0 ? "All done today." : todo === 1 ? "1 thing to do." : `${todo} things to do.`}
+            {active.length === 0 ? "All wrapped up." : todo === 1 ? "1 thing to do." : todo > 1 ? `${todo} things to do.` : live === 0 ? "Get ready." : "All done today."}
           </h1>
           <div className="space-y-3">
             <PushCard partner={partner} />

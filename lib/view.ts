@@ -1,5 +1,6 @@
 import type { PactBundle } from "./data";
-import { formatDay, diffDays } from "./dates";
+import { formatDay, diffDays, type Day } from "./dates";
+import type { Cadence } from "./streak";
 
 export function listNames(names: string[], max = 2) {
   if (names.length === 0) return "";
@@ -11,6 +12,25 @@ export function listNames(names: string[], max = 2) {
 
 export function firstName(name: string) {
   return name.trim().split(/\s+/)[0] || name;
+}
+
+/** how to name the link that can still be made up: "Tuesday" (daily) or "last week" (weekly) */
+export function makeUpLabel(cadence: Cadence, late: { start: Day }) {
+  return cadence === "daily" ? formatDay(late.start, { weekday: "long" }) : "last week";
+}
+
+export function capitalize(s: string) {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+/** does this person still have to make up yesterday? */
+export function owesMakeUp(b: PactBundle, id: string) {
+  return !!b.state.late?.owing.includes(id);
+}
+
+/** first names of everyone else who still has to make up yesterday */
+export function othersOwingMakeUp(b: PactBundle, me: string) {
+  return (b.state.late?.owing ?? []).filter((u) => u !== me).map((u) => firstName(b.allMembers.find((m) => m.user_id === u)?.name ?? "Someone"));
 }
 
 export function cadenceText(p: { cadence: "daily" | "weekly"; times_per_week: number; duration_days: number }) {
@@ -50,6 +70,11 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
   const others = members.filter((m) => m.user_id !== me);
   if (state.phase === "upcoming") {
     return others.length ? { text: `${startsText(pact.start_date, b.today)} with ${listNames(others.map((m) => firstName(m.name)))}`, tone: "info" } : { text: "Invite someone before it starts", tone: "info" };
+  }
+  if (state.late) {
+    const day = makeUpLabel(pact.cadence, state.late);
+    if (owesMakeUp(b, me)) return { text: `${capitalize(day)} is still open. Make it up today.`, tone: "risk" };
+    return { text: `Waiting on ${listNames(othersOwingMakeUp(b, me))} to make up ${day}`, tone: "wait" };
   }
   if (state.phase === "ended") {
     const unit = pact.cadence === "daily" ? "days" : "weeks";

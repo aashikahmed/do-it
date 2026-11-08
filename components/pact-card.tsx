@@ -1,12 +1,13 @@
 import Link from "next/link";
 import type { PactBundle } from "@/lib/data";
-import { didTheirPart, needsMe, progressText, statusLine, streakUnit } from "@/lib/view";
+import { didTheirPart, needsMe, owesMakeUp, progressText, statusLine, streakUnit } from "@/lib/view";
 import { Avatar } from "./avatar";
 import { Chain, recentWindow } from "./chain";
 
 export function PactCard({ b, me }: { b: PactBundle; me: string }) {
   const line = statusLine(b, me);
   const mine = needsMe(b, me);
+  const makeUp = owesMakeUp(b, me);
   const recent = recentWindow(b.state.periods, b.state.current?.index ?? null, 7);
   const ended = b.state.phase === "ended";
 
@@ -58,10 +59,13 @@ export function PactCard({ b, me }: { b: PactBundle; me: string }) {
           ))}
         </div>
         <p className="min-w-0 flex-1 text-[15px] leading-snug font-semibold">{line.text}</p>
-        {mine && !b.state.repair && (
-          <span className="shrink-0 rounded-full bg-white px-3 py-1.5 text-[13px] font-extrabold text-ink">Your turn</span>
+        {makeUp ? (
+          <span className="shrink-0 rounded-full bg-white px-3 py-1.5 text-[13px] font-extrabold text-ink">Make up</span>
+        ) : b.state.repair && !b.state.late ? (
+          <span className="shrink-0 rounded-full bg-ice px-3 py-1.5 text-[13px] font-extrabold text-ink">Freeze</span>
+        ) : (
+          mine && <span className="shrink-0 rounded-full bg-white px-3 py-1.5 text-[13px] font-extrabold text-ink">Your turn</span>
         )}
-        {b.state.repair && <span className="shrink-0 rounded-full bg-ice px-3 py-1.5 text-[13px] font-extrabold text-ink">Freeze</span>}
       </div>
     </Link>
   );

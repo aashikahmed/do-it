@@ -40,7 +40,7 @@ export function Live({ pactIds, days = [] }: { pactIds: string[]; days?: { tz: s
     let cancelled = false;
     if (ids.length) {
       const filter = ids.length === 1 ? `pact_id=eq.${ids[0]}` : `pact_id=in.(${ids.join(",")})`;
-      for (const table of ["checkins", "freezes", "nudges", "pact_members"]) {
+      for (const table of ["checkins", "freezes", "nudges", "pact_members", "misses"]) {
         channel.on("postgres_changes", { event: "*", schema: "public", table, filter }, soon);
       }
       // Realtime enforces RLS, so it must carry the user's token before subscribing.
