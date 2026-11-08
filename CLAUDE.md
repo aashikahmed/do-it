@@ -7,6 +7,7 @@
 - Every page = sync shell + `<Suspense>` around the data component. Anything reading cookies/auth goes behind Suspense; `lib/supabase/server.ts` calls `connection()` first.
 - Rounds: "Go again" = `start_next_round()` RPC → new pact with `previous_id`/`round`; lifetime totals in `lib/rounds.ts`. Home hides a finished round once it has a next round.
 - Streak logic lives only in `lib/streak.ts` (pure, tested). SQL mirrors the rules that must be enforced (check-in window trigger, freeze cap trigger, `create_pact` freeze allowance = `freezesFor`). Keep them in sync.
+- New functions start with no EXECUTE for anyone (default privileges, `20261113000000_lock_down_functions.sql`): grant each RPC to `authenticated` (and `anon` only if signed-out pages call it). `drop` + `create` loses grants; `create or replace` keeps them.
 - New tables need explicit GRANTs + RLS, even service-role-only ones (enable RLS, add no policies). Local doesn't auto-grant, but hosted prod has: don't treat a missing grant as protection. Column-level UPDATE grants protect fields like `freezes_allowed`, and only work with no table-wide UPDATE grant.
 - Local Supabase: `supabase start -x vector,logflare,imgproxy,studio,postgres-meta,edge-runtime,supavisor` (storage IS needed: avatars bucket). OTP emails → Mailpit :54324.
 - Profile photos: `profiles.avatar_url` is set only by server actions (Google photo or `avatars/<uid>/…` in our public bucket); client resizes to a 400px JPEG before upload.
