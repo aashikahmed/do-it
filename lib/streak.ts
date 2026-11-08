@@ -26,9 +26,22 @@ export function isRequired(m: MemberCore, start: Day) {
 export interface CheckinCore {
   user_id: string;
   day: Day;
+  /** logged the next day as a make-up ("I did it today to make up"), not just logged late */
+  made_up?: boolean;
 }
 
-export type PeriodStatus = "done" | "frozen" | "missed" | "open" | "upcoming";
+/** someone said "I missed it" about a day they could still have made up */
+export interface MissCore {
+  user_id: string;
+  day: Day;
+}
+
+/**
+ * late = ended yesterday, not closed yet, but still fixable today: everyone short of it is short by
+ * exactly one check-in, hasn't logged yesterday, and hasn't called it a miss. It doesn't break the
+ * streak until midnight. Mirrors checkins_guard() in SQL, which allows logging yesterday until then.
+ */
+export type PeriodStatus = "done" | "frozen" | "late" | "missed" | "open" | "upcoming";
 
 export interface Period {
   index: number;
@@ -39,6 +52,10 @@ export interface Period {
   required: string[];
   /** check-ins per member inside this period */
   counts: Record<string, number>;
+  /** required members still short of the target */
+  owing: string[];
+  /** closed with help from a make-up check-in */
+  madeUp: boolean;
 }
 
 export type Phase = "upcoming" | "active" | "ended";
@@ -56,7 +73,12 @@ export interface PactState {
   best: number;
   freezesUsed: number;
   freezesLeft: number;
-  /** consecutive missed periods right before the current one that a freeze could cover */
+  /** the period that ended yesterday and can still be made up today */
+  late: Period | null;
+  /**
+   * consecutive missed (or late) periods right before the current one that freezes could cover.
+   * Offered when the missed ones fit in the freezes left; a late one can be made up instead.
+   */
   repair: { periods: Day[]; previous: number } | null;
   completion: { done: number; closed: number; total: number };
 }
@@ -75,6 +97,7 @@ export function computePactState(
   checkins: CheckinCore[],
   frozenStarts: Day[],
   today: Day,
+  misses: MissCore[] = [],
 ): PactState {
   const len = periodLength(pact);
   const need = pact.cadence === "daily" ? 1 : pact.times_per_week;
@@ -85,6 +108,7 @@ export function computePactState(
   const memberIds = new Set(members.map((m) => m.user_id));
   // bucket check-ins by period index
   const buckets: Record<string, number>[] = Array.from({ length: total }, () => ({}));
+  const madeUp = new Set<number>();
   const seen = new Set<string>();
   for (const c of checkins) {
     if (!memberIds.has(c.user_id)) continue;
@@ -95,7 +119,10 @@ export function computePactState(
     if (offset < 0 || c.day > endDate) continue;
     const idx = Math.floor(offset / len);
     buckets[idx][c.user_id] = (buckets[idx][c.user_id] ?? 0) + 1;
+    if (c.made_up) madeUp.add(idx);
   }
+  const yesterday = addDays(today, -1);
+  const calledMiss = new Set(misses.filter((m) => m.day === yesterday).map((m) => m.user_id));
 
   const periods: Period[] = [];
   for (let i = 0; i < total; i++) {
@@ -106,12 +133,18 @@ export function computePactState(
     const counts = buckets[i];
     // a period only needs as many check-ins as it has days
     const periodNeed = Math.min(need, diffDays(start, end) + 1);
-    const complete = required.length > 0 && required.every((u) => (counts[u] ?? 0) >= periodNeed);
+    const owing = required.filter((u) => (counts[u] ?? 0) < periodNeed);
+    const complete = required.length > 0 && owing.length === 0;
     let status: PeriodStatus;
     if (start > today) status = "upcoming";
-    else if (end < today) status = complete ? "done" : frozen.has(start) ? "frozen" : "missed";
-    else status = complete ? "done" : "open";
-    periods.push({ index: i, start, end, status, required, counts });
+    else if (end < today) {
+      const fixable =
+        end === yesterday &&
+        required.length > 0 &&
+        owing.every((u) => (counts[u] ?? 0) === periodNeed - 1 && !seen.has(`${u}|${yesterday}`) && !calledMiss.has(u));
+      status = complete ? "done" : frozen.has(start) ? "frozen" : fixable ? "late" : "missed";
+    } else status = complete ? "done" : "open";
+    periods.push({ index: i, start, end, status, required, counts, owing, madeUp: complete && madeUp.has(i) });
   }
 
   const phase: Phase = today < pact.start_date ? "upcoming" : today > endDate ? "ended" : "active";
@@ -129,7 +162,7 @@ export function computePactState(
     for (; j >= 0; j--) {
       const s = periods[j].status;
       if (s === "done" || s === "frozen") streak++;
-      else break;
+      else if (s !== "late") break; // on the line until midnight, not broken yet
     }
   }
 
@@ -150,7 +183,9 @@ export function computePactState(
   if (current && current.index > 0) {
     const missed: Day[] = [];
     let j = current.index - 1;
-    while (j >= 0 && periods[j].status === "missed") {
+    let fixable = 0;
+    while (j >= 0 && (periods[j].status === "missed" || periods[j].status === "late")) {
+      if (periods[j].status === "late") fixable++;
       missed.push(periods[j].start);
       j--;
     }
@@ -160,11 +195,13 @@ export function computePactState(
       if (s === "done" || s === "frozen") restores++;
       else break;
     }
-    if (missed.length > 0 && restores > 0 && missed.length <= freezesLeft) {
+    // the late one can be made up instead, so only the older misses must fit in the freezes left
+    if (missed.length > 0 && restores > 0 && freezesLeft > 0 && missed.length - fixable <= freezesLeft) {
       repair = { periods: missed.reverse(), previous: restores };
     }
   }
 
+  const late = periods.find((p) => p.status === "late") ?? null;
   const closed = periods.filter((p) => p.status === "done" || p.status === "frozen" || p.status === "missed");
   const dayNumber = Math.min(Math.max(diffDays(pact.start_date, today) + 1, 1), pact.duration_days);
 
@@ -180,6 +217,7 @@ export function computePactState(
     best,
     freezesUsed,
     freezesLeft,
+    late,
     repair,
     completion: {
       done: periods.filter((p) => p.status === "done").length,

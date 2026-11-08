@@ -1,10 +1,11 @@
 import "server-only";
 import { createAdminClient } from "./supabase/admin";
-import { todayIn } from "./dates";
+import { addDays, todayIn } from "./dates";
 import { computePactState } from "./streak";
 import { sendPush } from "./push";
 import { fetchAll, type Pact } from "./data";
 import { formatValue } from "./measure";
+import { makeUpLabel } from "./view";
 
 type MemberRow = { user_id: string; joined_on: string; left_on: string | null; profile?: unknown };
 
@@ -19,16 +20,19 @@ export async function notifyCheckin(pactId: string, actorId: string, day: string
     .select("user_id");
   if (!claimed?.length) return;
 
-  const [{ data: pact }, { data: members }, { data: checkins }, { data: freezes }] = await Promise.all([
+  const [{ data: pact }, { data: members }, { data: checkins }, { data: freezes }, { data: misses }] = await Promise.all([
     admin.from("pacts").select("*").eq("id", pactId).single<Pact>(),
     admin.from("pact_members").select("user_id,joined_on,left_on,profile:profiles(display_name)").eq("pact_id", pactId),
-    fetchAll<{ user_id: string; day: string; value: number | null }>(() => admin.from("checkins").select("user_id,day,value").eq("pact_id", pactId).order("day").order("user_id")),
+    fetchAll<{ user_id: string; day: string; value: number | null; made_up: boolean }>(() =>
+      admin.from("checkins").select("user_id,day,value,made_up").eq("pact_id", pactId).order("day").order("user_id"),
+    ),
     admin.from("freezes").select("period_start").eq("pact_id", pactId),
+    admin.from("misses").select("user_id,day").eq("pact_id", pactId),
   ]);
   if (!pact || !members) return;
   const all = members as MemberRow[];
   const today = todayIn(pact.timezone);
-  const state = computePactState(pact, all, checkins ?? [], (freezes ?? []).map((f) => f.period_start), today);
+  const state = computePactState(pact, all, checkins ?? [], (freezes ?? []).map((f) => f.period_start), today, misses ?? []);
   const actorName = nameOf(all, actorId);
   const others = all.filter((m) => !m.left_on && m.user_id !== actorId).map((m) => m.user_id);
   const url = `/p/${pactId}`;
@@ -44,6 +48,30 @@ export async function notifyCheckin(pactId: string, actorId: string, day: string
       url,
       tag: `pact-${pactId}`,
     });
+    return;
+  }
+  // a check-in for yesterday: the make-up day
+  if (day === addDays(today, -1)) {
+    const p = state.periods.find((x) => x.start <= day && day <= x.end);
+    if (!p) return;
+    const label = makeUpLabel(pact.cadence, p);
+    const what = mine?.made_up ? "made up" : "logged";
+    const unit = pact.cadence === "daily" ? "day" : "week";
+    if (p.status === "done") {
+      await sendPush(others, {
+        title: `${pact.emoji} ${actorName} ${what} ${label}${did}`,
+        body: `The chain holds. ${state.streak}-${unit} streak on ${pact.title}.`,
+        url,
+        tag: `pact-${pactId}`,
+      });
+    } else if (p.status === "late") {
+      await sendPush(p.owing.filter((u) => others.includes(u)), {
+        title: `${pact.emoji} ${actorName} ${what} ${label}${did}`,
+        body: `${pact.title}. Your turn to make it up, before midnight.`,
+        url,
+        tag: `pact-${pactId}`,
+      });
+    }
     return;
   }
   if (day !== today) return;

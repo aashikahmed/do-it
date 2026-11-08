@@ -8,6 +8,7 @@ import { notifyCheckin } from "@/lib/notify";
 import { sendPush } from "@/lib/push";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { addDays, isValidTimeZone, todayIn } from "@/lib/dates";
+import { firstName, makeUpLabel } from "@/lib/view";
 
 export type ActionResult<T = undefined> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -35,6 +36,8 @@ function friendly(msg: string | undefined) {
     "There's nothing to freeze right now",
     "Pact not found",
     "This pact is still going",
+    "Only yesterday can be made up",
+    "Only yesterday can be called a miss",
   ];
   const hit = known.find((k) => msg.includes(k));
   if (hit) return hit;
@@ -186,6 +189,8 @@ const checkinSchema = z.object({
   value: z.number().min(0).max(999999).nullable().optional(),
   note: z.string().trim().max(280).nullable().optional(),
   feel: z.union([z.literal(1), z.literal(2), z.literal(3)]).nullable().optional(),
+  /** yesterday only: "I'm doing it today to make up" rather than "I did it, I forgot to log" */
+  madeUp: z.boolean().optional(),
 });
 
 export async function checkIn(input: z.input<typeof checkinSchema>): Promise<ActionResult<{ created: boolean }>> {
@@ -213,7 +218,8 @@ export async function checkIn(input: z.input<typeof checkinSchema>): Promise<Act
     return { ok: true, data: { created: false } };
   }
 
-  const { error } = await supabase.from("checkins").insert({ pact_id: v.pactId, user_id: userId, day: v.day, ...row });
+  const madeUp = v.when === "yesterday" && !!v.madeUp;
+  const { error } = await supabase.from("checkins").insert({ pact_id: v.pactId, user_id: userId, day: v.day, made_up: madeUp, ...row });
   if (error) {
     if (error.message.includes("duplicate key")) return { ok: true, data: { created: false } };
     return fail(friendly(error.message));
@@ -260,7 +266,7 @@ export async function undoCheckIn(input: { pactId: string; day: string }): Promi
 
 // ───────────────────────── nudges & freezes ─────────────────────────
 
-export async function nudge(input: { pactId: string; toUser: string }): Promise<ActionResult> {
+export async function nudge(input: { pactId: string; toUser: string; about?: "today" | "yesterday" }): Promise<ActionResult> {
   if (!uuid.safeParse(input.pactId).success || !uuid.safeParse(input.toUser).success) return fail("Can't nudge right now");
   const { supabase, userId } = await requireUser();
   if (input.toUser === userId) return fail("You can't nudge yourself");
@@ -272,11 +278,15 @@ export async function nudge(input: { pactId: string; toUser: string }): Promise<
     if (error.message.includes("duplicate key")) return fail("Already nudged today");
     return fail(friendly(error.message));
   }
+  const body =
+    input.about === "yesterday"
+      ? `${pact.emoji} ${pact.title}. There's still time to make up yesterday.`
+      : `${pact.emoji} ${pact.title}. Still on for today?`;
   after(async () => {
     const name = await displayName(userId);
     await sendPush([input.toUser], {
       title: `👋 ${name} nudged you`,
-      body: `${pact.emoji} ${pact.title}. Still on for today?`,
+      body,
       url: `/p/${pact.id}`,
       tag: `nudge-${pact.id}`,
     });
@@ -285,15 +295,21 @@ export async function nudge(input: { pactId: string; toUser: string }): Promise<
   return { ok: true };
 }
 
-export async function applyFreeze(pactId: string): Promise<ActionResult<{ restored: number }>> {
+/**
+ * Freeze the missed run before today. `older` leaves out yesterday's link when it can still be made up,
+ * so you can freeze the day before and make up yesterday.
+ */
+export async function applyFreeze(pactId: string, which: "all" | "older" = "all"): Promise<ActionResult<{ restored: number }>> {
   if (!uuid.safeParse(pactId).success) return fail("Pact not found");
   const { supabase, userId } = await requireUser();
   const bundle = await getPactForUser(supabase, pactId);
   if (!bundle) return fail("Pact not found");
   const repair = bundle.state.repair;
   if (!repair) return fail("There's nothing to freeze right now");
+  const periods = which === "older" ? repair.periods.filter((p) => p !== bundle.state.late?.start) : repair.periods;
+  if (!periods.length) return fail("There's nothing to freeze right now");
   // one transaction in SQL: validates every period really was missed, all or nothing
-  const { error } = await supabase.rpc("use_freezes", { p_pact: pactId, p_periods: repair.periods });
+  const { error } = await supabase.rpc("use_freezes", { p_pact: pactId, p_periods: periods });
   if (error) return fail(friendly(error.message));
   after(async () => {
     const name = await displayName(userId);
@@ -309,6 +325,38 @@ export async function applyFreeze(pactId: string): Promise<ActionResult<{ restor
   });
   refresh();
   return { ok: true, data: { restored: repair.previous } };
+}
+
+/** "I missed it": yesterday can't be made up, so the link breaks now and the reminders stop. */
+export async function callMiss(pactId: string): Promise<ActionResult> {
+  if (!uuid.safeParse(pactId).success) return fail("Pact not found");
+  const { supabase, userId } = await requireUser();
+  const bundle = await getPactForUser(supabase, pactId);
+  if (!bundle) return fail("Pact not found");
+  const { error } = await supabase.from("misses").insert({ pact_id: pactId, user_id: userId, day: bundle.yesterday });
+  if (error && !error.message.includes("duplicate key")) return fail(friendly(error.message));
+  if (!error) {
+    after(async () => {
+      const name = firstName(await displayName(userId));
+      const { pact, state } = bundle;
+      const unit = pact.cadence === "daily" ? "day" : "week";
+      const day = state.late ? makeUpLabel(pact.cadence, state.late) : "yesterday";
+      const canFreeze = !!state.repair && state.repair.periods.length <= state.freezesLeft;
+      await sendPush(
+        bundle.members.map((m) => m.user_id).filter((u) => u !== userId),
+        {
+          title: `${pact.emoji} ${name} missed ${day}`,
+          body: canFreeze
+            ? `${pact.title}. A freeze today keeps the ${state.repair!.previous}-${unit} streak.`
+            : `${pact.title}. The chain starts again today.`,
+          url: `/p/${pactId}`,
+          tag: `pact-${pactId}`,
+        },
+      );
+    });
+  }
+  refresh();
+  return { ok: true };
 }
 
 // ───────────────────────── push subscriptions ─────────────────────────

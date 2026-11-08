@@ -9,11 +9,11 @@ Mobile-first PWA: Next.js 16 (App Router, Cache Components), Supabase (Postgres 
 - **Pact**: what, how often (daily, or 1–6× a week), how long (7–90 days, or 4–12 weeks), and a start day (today or tomorrow). Optionally track a number (e.g. 50 push-ups).
 - **Chain**: one link per day (daily) or per week (weekly). A link closes when every *required* member hits the target. Members who join mid-pact count from the next day (or next week), so joining never reopens a period the group already closed.
 - **Freezes**: daily pacts get 1 per 10 days, weekly pacts 1 per 4 weeks, shared by the group. They can only patch the missed run *right before the current period*, so once a later day closes, the old streak is gone for good.
-- **Grace**: you can log yesterday until midnight (pact timezone).
+- **Make-up day**: a missed day stays open until midnight the next day (pact timezone). The chain shows it as on the line, not broken. Each person who owes it picks: make it up ("I did it, I forgot to log" or "I'm doing it today to make up", both count; made-up links get a small stitch), use a freeze, or "I missed it" (`misses`), which breaks the link right away and tells partners. Only yesterday can be made up. Reminders: a 9am push about yesterday, and the 8pm push covers both days. In the engine this is the `late` period status.
 - **Finish and rounds**: when the last day closes, the pact page becomes a recap (days kept, best streak, first-week vs last-week average) with a one-time celebration and a "you finished" push the next morning. "Go again" starts round N+1 today with the same settings and everyone still in it (they get a push and can leave from the menu). Each round is its own pact linked by `previous_id`; a finished round can only be continued once, so two partners tapping at once land in the same round. Once there are two or more rounds, the recap adds lifetime totals across them.
 - **Nudges**: one push nudge per person, per partner, per day, plus a WhatsApp button that opens WhatsApp with a ready-made message (you pick the contact).
 - **Sign-in**: Google only. On iPhone Home Screen apps, Google opens in a separate sheet; the callback parks the one-time code (`auth_handoffs`, keyed by a hashed nonce) and the app collects it and finishes the PKCE exchange itself. No emails are ever sent.
-- **Notifications**: a partner checked in (your turn), everyone's in, nudges, freezes, someone joined, a new round started, plus two cron pushes: the evening "chain at risk" reminder and the "you finished" push the morning after a pact ends.
+- **Notifications**: a partner checked in (your turn), everyone's in, a partner made up yesterday or called it a miss, nudges, freezes, someone joined, a new round started, plus three cron pushes: the 9am "yesterday is still open" make-up reminder, the evening "chain at risk" reminder (today and yesterday in one push), and the "you finished" push the morning after a pact ends (held a day if the last day can still be made up).
 - **Timezone**: every pact runs on its creator's timezone so the whole group shares one calendar.
 
 ## Local development
@@ -67,6 +67,6 @@ app/actions.ts         server actions: create/join/check-in/nudge/freeze/push
 app/p/[id]/            pact screen (chain, roster, hold-to-check-in, freeze, recap)
 app/new/               4-step create flow + invite
 app/j/[code]/          invite landing (works signed out)
-app/api/cron/reminders evening at-risk reminder + "you finished" push
+app/api/cron/reminders morning make-up reminder, evening at-risk reminder, "you finished" push
 public/sw.js           push + notification click handling
 ```
