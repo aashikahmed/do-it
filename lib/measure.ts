@@ -89,10 +89,38 @@ export function niceStep(x: number) {
   return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
 }
 
-/** Jump sizes for count chips: about 5%, 10% and 50% of the target. 20 → [1, 2, 10], 1000 → [50, 100, 500]. */
+/** The next tidy step up: 1 → 2 → 5 → 10. */
+function nextNiceStep(s: number) {
+  const p = 10 ** Math.floor(Math.log10(s));
+  const f = Math.round(s / p);
+  return (f === 1 ? 2 : f === 2 ? 5 : 10) * p;
+}
+
+/**
+ * Jump sizes for count chips: about 5%, 10% and 50% of the usual number (the larger of target and last value),
+ * always three distinct sizes. 20 → [1, 2, 10], 30 → [2, 5, 20], 1000 → [50, 100, 500].
+ * With nothing to go on yet, a wide spread: [1, 10, 100].
+ */
 export function countJumps(ref: number | null) {
-  const r = ref && ref > 0 ? ref : 20;
-  return [...new Set([niceStep(r * 0.05), niceStep(r * 0.1), niceStep(r * 0.5)])];
+  if (!ref || ref <= 0) return [1, 10, 100];
+  const r = Math.max(ref, 20);
+  const out: number[] = [];
+  for (const share of [0.05, 0.1, 0.5]) {
+    let s = niceStep(r * share);
+    while (out.length && s <= out[out.length - 1]) s = nextNiceStep(s);
+    out.push(s);
+  }
+  return out;
+}
+
+/**
+ * Elastic scrub speed, in units per second. `pull` is the handle's offset from the middle (−1 to 1); the curve keeps
+ * small pulls precise. Top speed follows the number itself, so it accelerates as it grows: 0 to 1,000 at full pull
+ * takes about 3 seconds, and 1,000 to 1,450 under a second.
+ */
+export function scrubRate(pull: number, value: number) {
+  const n = Math.max(-1, Math.min(1, pull));
+  return Math.sign(n) * Math.abs(n) ** 2.2 * Math.max(60, Math.abs(value) * 1.2);
 }
 
 /** Step for a held ± button on a count: ones at first, then sized to the number, then ten times that. */

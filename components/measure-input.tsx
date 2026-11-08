@@ -6,6 +6,7 @@ import {
   FEELS,
   MAX_VALUE,
   countJumps,
+  scrubRate,
   heldStep,
   jumpLabel,
   plateStep,
@@ -43,8 +44,17 @@ function prefersReducedMotion() {
  * Count: ± (held speeds up), elastic scrub and jump chips. Time: wheels and chips.
  * Distance and weight: a tape at 0.1 per tick (10 m for metres). The number can always be typed.
  */
-export function ValueInput({ t, value, onChange, size = "lg", id }: { t: Tracking; value: number | null; onChange: Change; size?: Size; id?: string }) {
-  // What the input opened with (the last logged value, or the target), for the "Back to" chip.
+type Props = { t: Tracking; value: number | null; onChange: Change; size?: Size; id?: string };
+
+export function ValueInput(props: Props) {
+  // Start fresh when what's measured changes (the create flow switches these), so Reset, chip sizes and time wheels
+  // never carry over from another measure.
+  const { measure, unit, direction } = props.t;
+  return <Picker key={`${measure}|${unit ?? ""}|${direction}`} {...props} />;
+}
+
+function Picker({ t, value, onChange, size = "lg", id }: Props) {
+  // What the input opened with (the last logged value, or the target), for the Reset chip.
   const [start] = useState(value);
   if (t.measure === "time") return <TimeInput t={t} value={value} onChange={onChange} start={start} size={size} id={id} />;
   if (t.measure === "count") return <CountInput t={t} value={value} onChange={onChange} start={start} size={size} id={id} />;
@@ -55,7 +65,7 @@ export function ValueInput({ t, value, onChange, size = "lg", id }: { t: Trackin
 
 function CountInput({ t, value, onChange, start, size, id }: { t: Tracking; value: number | null; onChange: Change; start: number | null; size: Size; id?: string }) {
   // Sized once: chips that resize under your finger are hard to hit twice.
-  const [jumps] = useState(() => countJumps(t.target ?? start));
+  const [jumps] = useState(() => countJumps(t.target === null || start === null ? (t.target ?? start) : Math.max(t.target, start)));
   const fmt = (n: number) => nf.format(n);
   return (
     <div className="space-y-2.5">
@@ -155,7 +165,7 @@ function Scrub({ value, onChange, unit, size }: { value: number | null; onChange
     cur.current = value;
   });
   const emit = useLatest(onChange);
-  const s = useRef({ on: false, x0: 0, dx: 0, anchor: 0, acc: 0, last: 0, raf: 0, offset: 0, maxRate: 0 });
+  const s = useRef({ on: false, x0: 0, dx: 0, anchor: 0, acc: 0, last: 0, raf: 0, offset: 0 });
   const [on, setOn] = useState(false);
 
   useEffect(() => () => cancelAnimationFrame(s.current.raf), []);
@@ -167,8 +177,7 @@ function Scrub({ value, onChange, unit, size }: { value: number | null; onChange
     const st = s.current;
     const dt = Math.min(0.05, (now - st.last) / 1000);
     st.last = now;
-    const n = Math.max(-1, Math.min(1, st.dx / limit()));
-    const rate = Math.sign(n) * Math.abs(n) ** 2.2 * st.maxRate;
+    const rate = scrubRate(st.dx / limit(), st.anchor + st.acc);
     st.acc += rate * dt;
     const raw = clampTo(st.anchor + st.acc);
     st.acc = raw - st.anchor;
@@ -177,7 +186,7 @@ function Scrub({ value, onChange, unit, size }: { value: number | null; onChange
       cur.current = next;
       emit.current(next);
     }
-    st.offset -= rate * dt * (400 / st.maxRate);
+    st.offset -= rate * dt * (400 / Math.max(60, Math.abs(raw) * 1.2));
     if (ticks.current) ticks.current.style.backgroundPositionX = `${st.offset % 12}px`;
     st.raf = requestAnimationFrame(frame);
   }
@@ -212,7 +221,6 @@ function Scrub({ value, onChange, unit, size }: { value: number | null; onChange
         st.dx = 0;
         st.anchor = cur.current ?? 0;
         st.acc = 0;
-        st.maxRate = Math.max(40, st.anchor * 0.9);
         st.last = performance.now();
         st.raf = requestAnimationFrame(frame);
       }}

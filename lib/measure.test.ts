@@ -10,6 +10,7 @@ import {
   pactDays,
   plateStep,
   progressStats,
+  scrubRate,
   tapeFor,
   targetText,
   timeJumps,
@@ -85,11 +86,29 @@ describe("pickers", () => {
   it("rounds to tidy steps", () => {
     expect([0, 1, 1.4, 3, 7, 9, 50, 120, 4000].map(niceStep)).toEqual([1, 1, 1, 2, 5, 10, 50, 100, 5000]);
   });
-  it("sizes count chips to the target", () => {
+  it("sizes count chips to the usual number, always three distinct sizes", () => {
     expect(countJumps(20)).toEqual([1, 2, 10]);
+    expect(countJumps(30)).toEqual([2, 5, 20]);
     expect(countJumps(1000)).toEqual([50, 100, 500]);
-    expect(countJumps(10)).toEqual([1, 5]);
-    expect(countJumps(null)).toEqual([1, 2, 10]);
+    expect(countJumps(10000)).toEqual([500, 1000, 5000]);
+    expect(countJumps(1)).toEqual([1, 2, 10]);
+    expect(countJumps(null)).toEqual([1, 10, 100]);
+    for (const r of [1, 7, 30, 45, 150, 333, 2500, 77777]) {
+      const j = countJumps(r);
+      expect(j).toHaveLength(3);
+      expect(j[0] < j[1] && j[1] < j[2]).toBe(true);
+    }
+  });
+  it("scrubs fast from zero and stays precise near the middle", () => {
+    const run = (from: number, to: number, pull: number) => {
+      let v = from, t = 0;
+      while (v < to && t < 60) { v += scrubRate(pull, v) / 60; t += 1 / 60; }
+      return t;
+    };
+    expect(run(0, 1000, 1)).toBeLessThan(4);
+    expect(run(1000, 1450, 1)).toBeLessThan(1);
+    expect(Math.abs(scrubRate(0.15, 1000))).toBeLessThan(20);
+    expect(scrubRate(-1, 100)).toBeLessThan(0);
   });
   it("speeds up a held button with the number's size", () => {
     expect(heldStep(1000, 0)).toBe(1);
