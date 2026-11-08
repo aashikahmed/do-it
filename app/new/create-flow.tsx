@@ -329,7 +329,7 @@ export function CreateFlow() {
                     )}
                     {d.measure === "distance" && (
                       <Field label="Unit">
-                        <Segmented options={[["km", "Kilometres"], ["mi", "Miles"]]} value={d.unit} onChange={(v) => set({ unit: v, target: null })} />
+                        <Segmented options={[["km", "Kilometres"], ["mi", "Miles"], ["m", "Metres"]]} value={d.unit} onChange={(v) => set({ unit: v, target: null })} />
                       </Field>
                     )}
                     {d.measure === "weight" && (

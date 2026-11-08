@@ -21,7 +21,7 @@ export const FEELS: { value: Feel; label: string }[] = [
 export const MEASURES: { value: Measure; label: string; hint: string }[] = [
   { value: "count", label: "Count", hint: "Reps, pages, glasses" },
   { value: "time", label: "Time", hint: "Minutes, a run, a hold" },
-  { value: "distance", label: "Distance", hint: "km or miles" },
+  { value: "distance", label: "Distance", hint: "km, miles or metres" },
   { value: "weight", label: "Weight", hint: "A lift or body weight" },
   { value: "none", label: "Nothing", hint: "Just keep the streak" },
 ];
@@ -78,12 +78,64 @@ export function measureNoun(t: Tracking) {
   return t.unit ?? "";
 }
 
-export function stepFor(t: Tracking, around: number | null) {
-  if (t.measure === "time") return (around ?? 0) >= 1200 ? 30 : 15;
-  if (t.measure === "distance") return 0.5;
-  if (t.measure === "weight") return t.unit === "lb" ? 5 : 2.5;
-  const ref = around ?? t.target ?? 0;
-  return ref >= 100 ? 10 : ref >= 20 ? 5 : 1;
+/** Largest value any input accepts (seconds for time). */
+export const MAX_VALUE = 999999;
+
+/** A tidy step close to x: 1, 2 or 5 times a power of ten, never below 1. */
+export function niceStep(x: number) {
+  if (!(x > 1)) return 1;
+  const p = 10 ** Math.floor(Math.log10(x));
+  const f = x / p;
+  return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
+}
+
+/** Jump sizes for count chips: about 5%, 10% and 50% of the target. 20 → [1, 2, 10], 1000 → [50, 100, 500]. */
+export function countJumps(ref: number | null) {
+  const r = ref && ref > 0 ? ref : 20;
+  return [...new Set([niceStep(r * 0.05), niceStep(r * 0.1), niceStep(r * 0.5)])];
+}
+
+/** Step for a held ± button on a count: ones at first, then sized to the number, then ten times that. */
+export function heldStep(value: number, heldMs: number) {
+  if (heldMs < 900) return 1;
+  const base = value < 20 ? 1 : value < 200 ? 5 : value < 2000 ? 10 : value < 20000 ? 100 : 1000;
+  return heldMs > 2200 ? base * 10 : base;
+}
+
+/**
+ * Which time wheels to show. Decided once when the input opens, so columns don't jump while scrolling.
+ * Seconds matter for short holds and race times, hours for long sessions. No target yet: show all three.
+ */
+export function timeWheels(t: Pick<Tracking, "direction" | "target">, value: number | null) {
+  const ref = t.target ?? value;
+  const v = value ?? 0;
+  return {
+    hours: !(ref !== null && ref < 600) || v >= 3600,
+    seconds: !(ref !== null && ref >= 600) || t.direction === "down" || v % 60 !== 0,
+  };
+}
+
+/** Signed chip jumps in seconds: minutes when hours show, seconds for short holds. */
+export function timeJumps(showsHours: boolean) {
+  return showsHours ? [-300, 300, 900] : [-15, 15, 30];
+}
+
+/** "+5 min", "−15 s", "+1 h" */
+export function jumpLabel(seconds: number) {
+  const s = Math.abs(seconds);
+  const body = s % 3600 === 0 ? `${s / 3600} h` : s % 60 === 0 ? `${s / 60} min` : `${s} s`;
+  return `${seconds < 0 ? "−" : "+"}${body}`;
+}
+
+/** The tape for distance and weight: tick size in the stored unit, which ticks are long and labelled, pixels per tick. */
+export function tapeFor(t: Pick<Tracking, "measure" | "unit">) {
+  if (t.measure === "distance" && t.unit === "m") return { tick: 10, majorEvery: 5, labelEvery: 10, px: 10 };
+  return { tick: 0.1, majorEvery: 5, labelEvery: 10, px: 13 };
+}
+
+/** A plate on each side, for lifts: 2.5 kg or 5 lb. */
+export function plateStep(unit: string | null) {
+  return unit === "lb" ? 5 : 2.5;
 }
 
 export interface Point {
