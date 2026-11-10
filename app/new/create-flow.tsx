@@ -295,7 +295,7 @@ export function CreateFlow() {
         </div>
       </div>
 
-      <div className="relative flex-1 overflow-x-hidden">
+      <div className="relative flex-1 overflow-x-clip">
         <AnimatePresence mode="wait" initial={false} custom={dir}>
           <motion.section
             key={step}
