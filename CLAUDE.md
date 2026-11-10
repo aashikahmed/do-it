@@ -15,5 +15,6 @@
 - Design tokens in app/globals.css (ink #10143A, mist, ultramarine, sun, ember, ice; per-pact `data-color`). Font: Bricolage Grotesque. Signature element: the chain (components/chain.tsx).
 - Copy voice: plain, sentence case, no "→", no all-caps labels.
 - Prod: doit.launchit.ae → Vercel `do-it` (fra1) + Supabase `ubdkikowagrmghxsgssi` (eu-central-1). See README "Production". Never `supabase config push` from repo config (would disable Google auth).
-- Auth = Google OAuth + iOS handoff (`app/auth/callback`, `app/api/auth/handoff`, `auth_handoffs`). Email OTP is dev-only.
+- Auth = Google OAuth + iOS handoff (`app/auth/callback`, `app/auth/handoff` confirm step, `app/api/auth/handoff`, `auth_handoffs`). A parked code is only released after "Yes, that was me" in the receiving browser (httpOnly `doit-handoff` cookie). Post-sign-in redirects go through `lib/safe-next.ts`. Email OTP is dev-only.
+- Merging to `main` deploys to prod immediately (Vercel Git). Apply migrations before merging; keep them compatible with the live code.
 - Contributions: see CONTRIBUTING.md and SECURITY.md. Contributors work from forks and never get production access. Keep CI free of real secrets and on `pull_request`, never `pull_request_target`.
