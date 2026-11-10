@@ -1,6 +1,7 @@
-import { addDays, diffDays, type Day } from "./dates";
+import { addDays, diffDays, weekdayOf, type Day } from "./dates";
 
 export type Cadence = "daily" | "weekly";
+export type Kind = "build" | "break";
 
 export interface PactCore {
   cadence: Cadence;
@@ -8,6 +9,14 @@ export interface PactCore {
   duration_days: number;
   start_date: Day;
   freezes_allowed: number;
+  /** build (do something) or break (stop or cut down); missing means build */
+  kind?: Kind;
+  /** break pacts with a daily limit: the most allowed per day */
+  target?: number | null;
+  /** lower the daily limit by this much each week */
+  limit_step?: number | null;
+  /** days off as a weekday bitmask (bit 0 = Sunday); daily pacts only */
+  rest_days?: number;
 }
 
 export interface MemberCore {
@@ -28,9 +37,14 @@ export interface CheckinCore {
   day: Day;
   /** logged the next day as a make-up ("I did it today to make up"), not just logged late */
   made_up?: boolean;
+  /** the number logged; on a break pact with a limit, over the limit doesn't count */
+  value?: number | null;
 }
 
-/** someone said "I missed it" about a day they could still have made up */
+/**
+ * Build pacts: someone said "I missed it" about yesterday, which they could still have made up.
+ * Break pacts: someone said "I gave in" (today or yesterday). Each one uses up a day the period allows.
+ */
 export interface MissCore {
   user_id: string;
   day: Day;
@@ -56,6 +70,10 @@ export interface Period {
   owing: string[];
   /** closed with help from a make-up check-in */
   madeUp: boolean;
+  /** a day off: always counts as kept */
+  rest: boolean;
+  /** break pacts: days each member gave in during this period */
+  slips: Record<string, number>;
 }
 
 export type Phase = "upcoming" | "active" | "ended";
@@ -91,6 +109,17 @@ export function pactEndDate(p: Pick<PactCore, "start_date" | "duration_days">): 
   return addDays(p.start_date, p.duration_days - 1);
 }
 
+export function isRestDay(p: Pick<PactCore, "cadence" | "rest_days">, day: Day) {
+  return p.cadence === "daily" && !!p.rest_days && (p.rest_days & (1 << weekdayOf(day))) !== 0;
+}
+
+/** Break pacts with a daily limit: the most allowed on `day`, after the weekly reductions. Mirrors limit_on() in SQL. */
+export function limitOn(p: Pick<PactCore, "kind" | "target" | "limit_step" | "start_date">, day: Day): number | null {
+  if (p.kind !== "break" || p.target === null || p.target === undefined) return null;
+  const week = Math.floor(diffDays(p.start_date, day) / 7);
+  return Math.max(0, Number(p.target) - Number(p.limit_step ?? 0) * week);
+}
+
 export function computePactState(
   pact: PactCore,
   members: MemberCore[],
@@ -104,6 +133,7 @@ export function computePactState(
   const endDate = pactEndDate(pact);
   const total = Math.ceil(pact.duration_days / len);
   const frozen = new Set(frozenStarts);
+  const isBreak = pact.kind === "break";
 
   const memberIds = new Set(members.map((m) => m.user_id));
   // bucket check-ins by period index
@@ -117,12 +147,29 @@ export function computePactState(
     seen.add(key);
     const offset = diffDays(pact.start_date, c.day);
     if (offset < 0 || c.day > endDate) continue;
+    // over the day's limit: answered, but it doesn't count
+    const limit = limitOn(pact, c.day);
+    if (limit !== null && c.value !== null && c.value !== undefined && Number(c.value) > limit) continue;
     const idx = Math.floor(offset / len);
     buckets[idx][c.user_id] = (buckets[idx][c.user_id] ?? 0) + 1;
     if (c.made_up) madeUp.add(idx);
   }
   const yesterday = addDays(today, -1);
   const calledMiss = new Set(misses.filter((m) => m.day === yesterday).map((m) => m.user_id));
+  // break pacts: every "I gave in" uses up one of the days a period allows
+  const slipBuckets: Record<string, number>[] = Array.from({ length: total }, () => ({}));
+  if (isBreak) {
+    const counted = new Set<string>();
+    for (const m of misses) {
+      const key = `${m.user_id}|${m.day}`;
+      if (!memberIds.has(m.user_id) || counted.has(key)) continue;
+      counted.add(key);
+      const offset = diffDays(pact.start_date, m.day);
+      if (offset < 0 || m.day > endDate) continue;
+      const idx = Math.floor(offset / len);
+      slipBuckets[idx][m.user_id] = (slipBuckets[idx][m.user_id] ?? 0) + 1;
+    }
+  }
 
   const periods: Period[] = [];
   for (let i = 0; i < total; i++) {
@@ -131,32 +178,38 @@ export function computePactState(
     const end = rawEnd > endDate ? endDate : rawEnd;
     const required = members.filter((m) => isRequired(m, start)).map((m) => m.user_id);
     const counts = buckets[i];
+    const slips = slipBuckets[i];
+    const rest = isRestDay(pact, start);
     // a period only needs as many check-ins as it has days
-    const periodNeed = Math.min(need, diffDays(start, end) + 1);
-    const owing = required.filter((u) => (counts[u] ?? 0) < periodNeed);
-    const complete = required.length > 0 && owing.length === 0;
+    const days = diffDays(start, end) + 1;
+    const periodNeed = Math.min(need, days);
+    const owing = rest ? [] : required.filter((u) => (counts[u] ?? 0) < periodNeed);
+    const complete = rest || (required.length > 0 && owing.length === 0);
+    // break pacts: someone gave in more often than the period allows, so it's lost before it ends
+    const broken = !complete && required.some((u) => (slips[u] ?? 0) > days - periodNeed);
     let status: PeriodStatus;
     if (start > today) status = "upcoming";
     else if (end < today) {
       const fixable =
         end === yesterday &&
         required.length > 0 &&
+        !broken &&
         owing.every((u) => (counts[u] ?? 0) === periodNeed - 1 && !seen.has(`${u}|${yesterday}`) && !calledMiss.has(u));
       status = complete ? "done" : frozen.has(start) ? "frozen" : fixable ? "late" : "missed";
-    } else status = complete ? "done" : "open";
-    periods.push({ index: i, start, end, status, required, counts, owing, madeUp: complete && madeUp.has(i) });
+    } else status = complete ? "done" : broken ? (frozen.has(start) ? "frozen" : "missed") : "open";
+    periods.push({ index: i, start, end, status, required, counts, owing, madeUp: complete && madeUp.has(i), rest, slips });
   }
 
   const phase: Phase = today < pact.start_date ? "upcoming" : today > endDate ? "ended" : "active";
   const current = phase === "active" ? periods.find((p) => p.start <= today && today <= p.end) ?? null : null;
   const lastIdx = phase === "upcoming" ? -1 : current ? current.index : total - 1;
 
-  // current streak: current period counts only if already done; open never breaks it
+  // current streak: current period counts only if already done (or frozen); open never breaks it, missed does
   let streak = 0;
-  if (lastIdx >= 0) {
+  if (lastIdx >= 0 && current?.status !== "missed") {
     let j = lastIdx;
     if (current) {
-      if (current.status === "done") streak = 1;
+      if (current.status === "done" || current.status === "frozen") streak = 1;
       j = lastIdx - 1;
     }
     for (; j >= 0; j--) {
@@ -180,9 +233,10 @@ export function computePactState(
   const freezesLeft = Math.max(0, pact.freezes_allowed - freezesUsed);
 
   let repair: PactState["repair"] = null;
-  if (current && current.index > 0) {
+  // a break pact's current period can already be lost (someone gave in today): it can be frozen right away
+  if (current && (current.index > 0 || current.status === "missed")) {
     const missed: Day[] = [];
-    let j = current.index - 1;
+    let j = current.status === "missed" ? current.index : current.index - 1;
     let fixable = 0;
     while (j >= 0 && (periods[j].status === "missed" || periods[j].status === "late")) {
       if (periods[j].status === "late") fixable++;

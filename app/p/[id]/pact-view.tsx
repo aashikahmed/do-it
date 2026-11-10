@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { applyFreeze, callMiss, checkIn, leavePact, nudge, startNextRound, undoCheckIn, updateCheckIn } from "@/lib/client-actions";
+import { applyFreeze, askForHelp, callMiss, checkIn, leavePact, nudge, saveCravingPlan, startNextRound, undoCheckIn, updateCheckIn } from "@/lib/client-actions";
 import { Avatar } from "@/components/avatar";
 import { Burst } from "@/components/burst";
 import { BottomDock } from "@/components/bottom-dock";
@@ -16,8 +16,23 @@ import { Sheet } from "@/components/sheet";
 import { ShareInvite } from "@/components/share-invite";
 import { toast } from "@/components/toast";
 import type { Checkin, Me, PactBundle } from "@/lib/data";
-import { diffDays, formatDay, todayIn } from "@/lib/dates";
-import { cadenceText, capitalize, firstName, listNames, makeUpLabel, othersOwingMakeUp, owesMakeUp, progressText, startsText } from "@/lib/view";
+import { addDays, diffDays, formatDay, todayIn } from "@/lib/dates";
+import {
+  allowedDays,
+  answerOn,
+  cadenceText,
+  capitalize,
+  firstName,
+  listNames,
+  makeUpLabel,
+  othersOwingMakeUp,
+  owesMakeUp,
+  owesYesterdayAnswer,
+  progressText,
+  startsText,
+  subjectOf,
+} from "@/lib/view";
+import { limitOn, type Period } from "@/lib/streak";
 import { FEELS, formatAvg, formatValue, isBetter, progressStats, targetText, type Feel, type Tracking } from "@/lib/measure";
 import { keptCount, type Series } from "@/lib/rounds";
 import { logAvatarTap } from "@/lib/track";
@@ -61,7 +76,13 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
         </div>
       ) : (
       <div className="space-y-3 px-4 pt-3">
-        {state.late ? <MakeUpCard b={b} me={me.id} onCelebrate={setBurst} /> : state.repair && <RepairCard b={b} />}
+        {pact.kind === "break" ? (
+          owesYesterdayAnswer(b, me.id) || state.late ? <YesterdayCard b={b} me={me.id} onCelebrate={setBurst} /> : state.repair && <RepairCard b={b} />
+        ) : state.late ? (
+          <MakeUpCard b={b} me={me.id} onCelebrate={setBurst} />
+        ) : (
+          state.repair && <RepairCard b={b} />
+        )}
         {state.phase === "ended" ? (
           <>
             <Recap b={b} me={me} />
@@ -79,7 +100,7 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
       </div>
       )}
 
-      {state.phase === "active" && <ActionBar b={b} me={me} onCelebrate={setBurst} />}
+      {state.phase === "active" && (pact.kind === "break" ? <BreakBar b={b} me={me} onCelebrate={setBurst} /> : <ActionBar b={b} me={me} onCelebrate={setBurst} />)}
       {state.phase === "upcoming" && (
         <BottomDock className="bg-gradient-to-t from-mist via-mist to-transparent px-4 pt-10 pb-safe" estimate={110}>
           <div className="rounded-[22px] bg-paper p-4 text-center text-[17px] font-bold">{startsText(pact.start_date, b.today)}. Check-ins open then.</div>
@@ -101,6 +122,14 @@ function Hero({ b, onMenu }: { b: PactBundle; onMenu: () => void }) {
   const shown = useMemo(() => chainWindow(state.periods, currentIndex), [state.periods, currentIndex]);
   const big = ended ? keptCount(state) : state.streak;
   const unit = pact.cadence === "daily" ? "day" : "week";
+  const isBreak = pact.kind === "break";
+  const label = ended
+    ? `of ${state.periods.length} ${unit}s kept`
+    : !isBreak || pact.cadence === "weekly"
+      ? `${unit} streak`
+      : pact.measure === "count"
+        ? `${big === 1 ? "day" : "days"} within your limit`
+        : `${big === 1 ? "day" : "days"} without ${subjectOf(pact)}`;
 
   return (
     <section className="bg-[var(--pact)] px-5 pt-safe pb-7 text-[var(--pact-ink)]">
@@ -127,7 +156,7 @@ function Hero({ b, onMenu }: { b: PactBundle; onMenu: () => void }) {
           <h1 className="text-[24px] leading-tight font-extrabold tracking-tight">{pact.title}</h1>
           <p className="text-[15px] font-medium opacity-80">
             {cadenceText(pact)}
-            {targetText(pact) ? `. ${targetText(pact)}` : ""}
+            {!isBreak && targetText(pact) ? `. ${targetText(pact)}` : ""}
           </p>
         </div>
       </div>
@@ -144,8 +173,8 @@ function Hero({ b, onMenu }: { b: PactBundle; onMenu: () => void }) {
             {big}
           </motion.p>
           <p className="mt-1 text-[17px] font-bold">
-            {ended ? `of ${state.periods.length} ${unit}s kept` : `${unit} streak`}
-            {state.late && <span className="ml-2 rounded-full bg-white/20 px-2.5 py-0.5 text-[14px] font-extrabold">on the line</span>}
+            {label}
+            {state.late && !isBreak && <span className="ml-2 rounded-full bg-white/20 px-2.5 py-0.5 text-[14px] font-extrabold">on the line</span>}
           </p>
         </div>
         <dl className="space-y-1 pb-1 text-right text-[14px] font-semibold opacity-90">
@@ -210,10 +239,12 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
           const required = cur ? cur.required.includes(m.user_id) : true;
           const done = pact.cadence === "daily" ? !!todays : count >= state.need;
           const nudged = b.nudges.some((n) => n.from_user === me.id && n.to_user === m.user_id);
-          const owesLate = owesMakeUp(b, m.user_id);
+          const isBreak = pact.kind === "break";
+          const owesLate = isBreak ? owesYesterdayAnswer(b, m.user_id) : owesMakeUp(b, m.user_id);
           let status: string;
           if (state.phase === "upcoming") status = isMe ? "Ready" : `Joined ${formatDay(m.joined_at.slice(0, 10), { day: "numeric", month: "short" })}`;
           else if (!required) status = pact.cadence === "daily" ? "Joins the chain tomorrow" : "Joins the chain next week";
+          else if (isBreak) status = breakStatus(b, m.user_id, todays);
           else if (pact.cadence === "daily") status = todays ? describe(todays, pact) : "Not yet";
           else status = `${count} of ${state.need} this week${todays ? ", done today" : ""}`;
 
@@ -224,7 +255,7 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
                 name={m.name}
                 src={m.avatar_url}
                 size={44}
-                done={state.phase === "active" && done}
+                done={state.phase === "active" && (isBreak ? answerOn(b, m.user_id, b.today) === "yes" : done)}
                 onTap={isMe ? undefined : () => logAvatarTap(pact.id, m.user_id)}
               />
               <div className="min-w-0 flex-1">
@@ -234,11 +265,12 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
                 </p>
                 <p className={`truncate text-[15px] ${done ? "font-semibold text-ink" : "text-ink-2"}`}>{status}</p>
                 {todays?.note && <p className="mt-0.5 line-clamp-2 text-[15px] text-ink-2">“{todays.note}”</p>}
-                {owesLate && state.late && (
+                {owesLate && isBreak && <p className="truncate text-[14px] font-semibold text-ink-2">Hasn&apos;t answered for yesterday</p>}
+                {owesLate && !isBreak && state.late && (
                   <p className="truncate text-[14px] font-bold text-[#c4381b]">Still owes {makeUpLabel(pact.cadence, state.late)}</p>
                 )}
               </div>
-              {!isMe && state.phase === "active" && ((required && !done) || owesLate) && (
+              {!isMe && (state.phase === "active" || owesLate) && (isBreak ? owesLate : (required && !done) || owesLate) && (
                 <div className="flex shrink-0 items-center gap-1.5">
                   <WhatsAppNudge b={b} me={me} name={firstName(m.name)} yesterday={owesLate} />
                   <NudgeButton pactId={pact.id} toUser={m.user_id} name={firstName(m.name)} nudged={nudged} yesterday={owesLate} />
@@ -250,6 +282,21 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
       </ul>
     </section>
   );
+}
+
+/** "Stayed off it today", "1 of 2 cups today", "2 of 3 days used". */
+function breakStatus(b: PactBundle, userId: string, todays: Checkin | undefined) {
+  const { pact, state } = b;
+  const cur = state.current;
+  if (cur?.rest) return "Day off";
+  const t = answerOn(b, userId, b.today);
+  const today = t === "yes" ? (todays?.value !== null && todays?.value !== undefined && pact.measure === "count" ? `${formatValue(pact, todays.value)} today` : "Stayed off it today") : t === "no" ? "Gave in today" : null;
+  if (pact.cadence === "weekly" && cur) {
+    const allowed = allowedDays(pact);
+    const used = `${cur.slips[userId] ?? 0} of ${allowed} ${allowed === 1 ? "day" : "days"} used`;
+    return today ? `${used}, ${t === "yes" ? "off it today" : "had some today"}` : used;
+  }
+  return today ?? "Not yet";
 }
 
 function describe(c: Checkin, t: Tracking) {
@@ -274,12 +321,15 @@ function WhatsAppNudge({ b, me, name, yesterday }: { b: PactBundle; me: Me; name
   function open() {
     const url = `${window.location.origin}/p/${b.pact.id}`;
     const day = b.state.late ? makeUpLabel(b.pact.cadence, b.state.late) : "yesterday";
-    const line = yesterday
+    const line = b.pact.kind === "break"
+      ? `How did yesterday go, ${name}? You can answer until midnight.`
+      : yesterday
       ? `There's still time to make up ${day}, ${name}. The chain breaks at midnight.`
       : iDidIt
         ? `I've done mine today. Your turn, ${name} 👀`
         : `Still on for today, ${name}? Let's not break the chain.`;
-    const text = `${b.pact.emoji} ${b.pact.title}: ${line}\n${url}`;
+    // break pacts never name the habit, here either
+    const text = b.pact.kind === "break" ? `${b.pact.emoji} ${line}\n${url}` : `${b.pact.emoji} ${b.pact.title}: ${line}\n${url}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
   }
   return (
@@ -764,7 +814,19 @@ function RepairCard({ b }: { b: PactBundle }) {
   const router = useRouter();
   const n = repair.periods.length;
   const unit = b.pact.cadence === "daily" ? "day" : "week";
-  const when = n === 1 ? (b.pact.cadence === "daily" ? (repair.periods[0] === b.yesterday ? "yesterday" : formatDay(repair.periods[0], { weekday: "long" })) : "last week") : `${n} ${unit}s in a row`;
+  const first = repair.periods[0];
+  const when =
+    n === 1
+      ? b.pact.cadence === "daily"
+        ? first === b.today
+          ? "today"
+          : first === b.yesterday
+            ? "yesterday"
+            : formatDay(first, { weekday: "long" })
+        : first === b.state.current?.start
+          ? "this week"
+          : "last week"
+      : `${n} ${unit}s in a row`;
 
   async function use() {
     setBusy(true);
@@ -791,6 +853,397 @@ function RepairCard({ b }: { b: PactBundle }) {
         {busy ? "Freezing…" : `🧊 Use ${n === 1 ? "a freeze" : `${n} freezes`}`}
       </button>
     </motion.section>
+  );
+}
+
+// ───────────────────────── break a habit ─────────────────────────
+// Break pacts ask one question a day: did you stay off it? Today's opens at 6pm (it isn't over before then), and
+// yesterday's stays open until midnight. Nothing here pushes: notifications only go out in the morning.
+
+const panel = "rounded-[22px] bg-paper p-4 shadow-[0_10px_30px_-16px_rgba(16,20,58,0.35)]";
+
+function BreakBar({ b, me, onCelebrate }: { b: PactBundle; me: Me; onCelebrate: Celebrate }) {
+  const { pact, state } = b;
+  const what = subjectOf(pact);
+  const cur = state.current;
+  const answer = answerOn(b, me.id, b.today);
+  const mine = b.checkins.find((c) => c.user_id === me.id && c.day === b.today);
+  const amount = pact.measure === "count";
+  const limit = limitOn(pact, b.today);
+  const weekly = pact.cadence === "weekly";
+  const allowed = allowedDays(pact);
+  const left = Math.max(0, allowed - (cur?.slips[me.id] ?? 0));
+  const [value, setValue] = useState<number | null>(0);
+  const [busy, setBusy] = useState(false);
+  const [sheet, setSheet] = useState<"gave-in" | "over" | "craving" | null>(null);
+  const router = useRouter();
+
+  async function yes() {
+    if (busy) return;
+    if (amount && limit !== null && (value ?? 0) > limit) return setSheet("over");
+    setBusy(true);
+    const res = await checkIn({ pactId: pact.id, when: "today", value: amount ? (value ?? 0) : null });
+    setBusy(false);
+    if (!res.ok) return toast(res.error, "error");
+    const waiting = b.members.filter((m) => m.user_id !== me.id && cur?.required.includes(m.user_id) && answerOn(b, m.user_id, b.today) !== "yes");
+    if (!weekly && !waiting.length && cur?.status === "open") {
+      const n = state.streak + 1;
+      onCelebrate({ title: `${n} ${n === 1 ? "day" : "days"}.`, subtitle: b.members.length > 1 ? "Everyone stayed off it today." : "Another day kept." });
+    } else onCelebrate({ title: "Day kept.", subtitle: waiting.length ? `${listNames(waiting.map((m) => firstName(m.name)))} can answer later.` : undefined });
+    router.refresh();
+  }
+
+  async function undo() {
+    setBusy(true);
+    const res = await undoCheckIn({ pactId: pact.id, day: b.today });
+    setBusy(false);
+    if (!res.ok) return toast(res.error, "error");
+    router.refresh();
+  }
+
+  // one question at a time: yesterday's card comes first
+  const yesterdayFirst = owesYesterdayAnswer(b, me.id);
+  const asking = answer === null && !cur?.rest && b.canAnswerToday && !yesterdayFirst;
+  const weekLine = weekly ? (left === 0 ? `No ${what} days left this week.` : `${left} of ${allowed} ${what} ${allowed === 1 ? "day" : "days"} left this week.`) : null;
+  const links = (
+    <div className="flex justify-center gap-5 pt-0.5">
+      {answer === null && !cur?.rest && !asking && (
+        <button onClick={() => setSheet("gave-in")} className="h-9 text-[15px] font-bold text-ink-2">
+          {weekly ? "I had some today" : "I gave in"}
+        </button>
+      )}
+      <button onClick={() => setSheet("craving")} className="h-9 text-[15px] font-bold text-ink-2">
+        Having a craving?
+      </button>
+    </div>
+  );
+
+  let content: React.ReactNode;
+  if (yesterdayFirst && answer === null) {
+    content = null;
+  } else if (cur?.rest) {
+    content = (
+      <div className={panel}>
+        <p className="text-[17px] font-extrabold">Day off today</p>
+        <p className="mt-0.5 text-[15px] text-ink-2">No need to answer. Back to it tomorrow.</p>
+      </div>
+    );
+  } else if (answer === "no") {
+    const lost = cur?.status === "missed";
+    const saved = cur?.status === "frozen";
+    content = (
+      <div className={panel}>
+        <p className="text-[17px] font-extrabold">
+          {saved ? `${weekly ? "This week is" : "Today is"} saved with a freeze` : weekly && !lost ? "You had some today" : weekly ? "This week won't count" : "Today won't count"}
+        </p>
+        <p className="mt-0.5 text-[15px] text-ink-2">{saved ? "The streak keeps going. Back at it tomorrow." : weekly && !lost ? weekLine : weekly ? `A fresh week starts ${formatDay(addDays(cur!.end, 1), { weekday: "long" })}.` : "Back at it tomorrow."}</p>
+      </div>
+    );
+  } else if (answer === "yes") {
+    content = (
+      <div className={`${panel} flex items-center gap-3`}>
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--pact)] text-[var(--pact-ink)]" aria-hidden>
+          <svg viewBox="0 0 24 24" width="22" height="22">
+            <path d="M5 12.5 10 17.5 19.5 7" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[17px] font-extrabold">{amount && mine?.value !== null && mine?.value !== undefined ? `${formatValue(pact, mine.value)} today` : `You stayed off ${what} today`}</p>
+          <button onClick={() => setSheet("gave-in")} className="text-[14px] font-semibold text-ink-2 underline-offset-2 hover:underline">
+            I gave in after all
+          </button>
+        </div>
+        <button disabled={busy} onClick={undo} className="h-11 rounded-full bg-mist px-4 text-[15px] font-bold disabled:opacity-50">
+          Undo
+        </button>
+      </div>
+    );
+  } else if (asking) {
+    content = (
+      <div className={`${panel} space-y-3`}>
+        <div>
+          <p className="text-[19px] leading-tight font-extrabold">{amount ? `How many ${pact.unit} today?` : `Did you stay off ${what} today?`}</p>
+          <p className="mt-1 text-[15px] text-ink-2">{amount && limit !== null ? `Your limit today is ${formatValue(pact, limit)}.` : weekLine ?? "You can also answer tomorrow morning."}</p>
+        </div>
+        {amount && <ValueInput t={pact} value={value} onChange={setValue} />}
+        {amount ? (
+          <button disabled={busy} onClick={yes} className="h-14 w-full rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-50">
+            {busy ? "Saving…" : "Save"}
+          </button>
+        ) : (
+          <div className="grid gap-2">
+            <button disabled={busy} onClick={yes} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-50">
+              {busy ? "Saving…" : "Yes, I did"}
+            </button>
+            <button onClick={() => setSheet("gave-in")} className="h-14 rounded-2xl bg-mist text-[17px] font-bold">
+              {weekly ? "No, I had some" : "No, I gave in"}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  } else {
+    content = (
+      <div className={panel}>
+        <p className="text-[17px] font-extrabold">{pact.ask_next_morning ? "We'll ask you tomorrow morning" : "Nothing to do until 6pm"}</p>
+        <p className="mt-0.5 text-[15px] text-ink-2">
+          {pact.ask_next_morning ? "Once today is over, you say how it went." : "Then you can say how today went, or leave it until tomorrow morning."}
+          {weekLine ? ` ${weekLine}` : ""}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <BottomDock className="bg-gradient-to-t from-mist via-mist/95 to-transparent px-4 pt-10 pb-safe" estimate={!content ? 60 : amount && asking ? 300 : 170}>
+      <div className="space-y-2">
+        {content}
+        {links}
+      </div>
+      <GiveInSheet b={b} me={me.id} when="today" over={sheet === "over" ? value : null} open={sheet === "gave-in" || sheet === "over"} onClose={() => setSheet(null)} />
+      <CravingSheet b={b} me={me} open={sheet === "craving"} onClose={() => setSheet(null)} />
+    </BottomDock>
+  );
+}
+
+/** Yesterday's question, or who it's waiting on. Calm, not an alarm: answering the next morning is the normal way. */
+function YesterdayCard({ b, me, onCelebrate }: { b: PactBundle; me: string; onCelebrate: Celebrate }) {
+  const { pact, state } = b;
+  const what = subjectOf(pact);
+  const amount = pact.measure === "count";
+  const limit = limitOn(pact, b.yesterday);
+  const day = formatDay(b.yesterday, { weekday: "long" });
+  const iOwe = owesYesterdayAnswer(b, me);
+  const [value, setValue] = useState<number | null>(0);
+  const [busy, setBusy] = useState(false);
+  const [sheet, setSheet] = useState<"gave-in" | "over" | null>(null);
+  const router = useRouter();
+
+  // older misses in the same run can only be saved by a freeze, before yesterday closes
+  const late = state.late;
+  const older = state.repair && late ? state.repair.periods.filter((p) => p !== late.start) : [];
+
+  async function yes() {
+    if (busy) return;
+    if (amount && limit !== null && (value ?? 0) > limit) return setSheet("over");
+    setBusy(true);
+    const res = await checkIn({ pactId: pact.id, when: "yesterday", value: amount ? (value ?? 0) : null });
+    setBusy(false);
+    if (!res.ok) return toast(res.error, "error");
+    const closes = !!late && late.owing.length === 1 && late.owing[0] === me;
+    if (closes) {
+      const n = state.streak + 1;
+      const unit = pact.cadence === "daily" ? "day" : "week";
+      onCelebrate({ title: `${n} ${n === 1 ? unit : unit + "s"}.`, subtitle: `${capitalize(day)} is kept.` });
+    } else toast(`Saved for ${day}`);
+    router.refresh();
+  }
+
+  async function freezeOlder() {
+    setBusy(true);
+    const res = await applyFreeze(pact.id, "older");
+    setBusy(false);
+    if (!res.ok) return toast(res.error, "error");
+    toast("🧊 Frozen. Now answer for yesterday.");
+    router.refresh();
+  }
+
+  if (!iOwe) {
+    const others = othersOwingMakeUp(b, me);
+    if (!others.length) return null;
+    return (
+      <section className="rounded-[24px] bg-paper p-5">
+        <p className="text-[18px] leading-tight font-extrabold">Waiting on {listNames(others)} to answer for {day}</p>
+        <p className="mt-1.5 text-[15px] leading-snug text-ink-2">They have until midnight. A nudge might help.</p>
+      </section>
+    );
+  }
+
+  return (
+    <motion.section initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="rounded-[24px] bg-[var(--pact-soft)] p-5 text-ink">
+      <p className="text-[20px] leading-tight font-extrabold">How did {day} go?</p>
+      <p className="mt-1.5 text-[15px] leading-snug text-ink-2">
+        {amount ? `How many ${pact.unit} did you have? Your limit was ${formatValue(pact, limit ?? 0)}.` : `Did you stay off ${what}?`} You can answer until midnight.
+      </p>
+      {older.length > 0 && (
+        <div className="mt-3 rounded-2xl bg-white/70 p-3">
+          <p className="text-[15px] leading-snug font-semibold">
+            The {older.length === 1 ? "day" : `${older.length} days`} before {older.length === 1 ? "was" : "were"} lost too, and only a freeze can save {older.length === 1 ? "it" : "them"}. Freeze first, then answer.
+          </p>
+          <button disabled={busy} onClick={freezeOlder} className="mt-2 h-11 rounded-full bg-ink px-4 text-[15px] font-extrabold text-white disabled:opacity-50">
+            {busy ? "Freezing…" : `🧊 Use ${older.length === 1 ? "a freeze" : `${older.length} freezes`}`}
+          </button>
+        </div>
+      )}
+      {amount && (
+        <div className="mt-4 rounded-2xl bg-white/70 p-2">
+          <ValueInput t={pact} value={value} onChange={setValue} size="md" />
+        </div>
+      )}
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button disabled={busy} onClick={yes} className="h-12 rounded-full bg-ink px-5 text-[16px] font-extrabold text-white disabled:opacity-50">
+          {busy ? "Saving…" : amount ? "Save" : "Yes, I did"}
+        </button>
+        {!amount && (
+          <button onClick={() => setSheet("gave-in")} className="h-12 rounded-full bg-ink/[0.07] px-5 text-[16px] font-bold text-ink">
+            {pact.cadence === "weekly" ? "No, I had some" : "No, I gave in"}
+          </button>
+        )}
+      </div>
+      <GiveInSheet b={b} me={me} when="yesterday" over={sheet === "over" ? value : null} open={sheet !== null} onClose={() => setSheet(null)} />
+    </motion.section>
+  );
+}
+
+/** "I gave in": thanks for saying so, what it means for the chain, and a freeze if one can save it. */
+function GiveInSheet({ b, me, when, over, open, onClose }: { b: PactBundle; me: string; when: "today" | "yesterday"; over: number | null; open: boolean; onClose: () => void }) {
+  const { pact, state } = b;
+  const day = when === "today" ? b.today : b.yesterday;
+  const period: Period | undefined = state.periods.find((p) => p.start <= day && day <= p.end);
+  const weekly = pact.cadence === "weekly";
+  const allowed = allowedDays(pact);
+  const used = period?.slips[me] ?? 0;
+  // weekly: the week only breaks once the days it allows run out
+  const breaks = !weekly || (period?.status !== "done" && used + 1 > allowed);
+  const others = b.members.filter((m) => m.user_id !== me).map((m) => firstName(m.name));
+  const late = state.late?.start;
+  const needed = 1 + (state.repair?.periods.filter((p) => p !== late && p !== period?.start).length ?? 0);
+  const saved = state.streak > 0 || (state.repair?.previous ?? 0) > 0;
+  const canFreeze = breaks && saved && state.freezesLeft >= needed;
+  const [busy, setBusy] = useState(false);
+  const router = useRouter();
+  const which = when === "today" ? "Today" : formatDay(day, { weekday: "long" });
+  const unit = weekly ? "This week" : which;
+
+  async function go(freeze: boolean) {
+    setBusy(true);
+    const res = await callMiss(pact.id, { when, freeze });
+    setBusy(false);
+    if (!res.ok) return toast(res.error, "error");
+    onClose();
+    toast(res.data?.frozen ? "🧊 Streak saved" : breaks ? "Back at it tomorrow" : "Noted");
+    router.refresh();
+  }
+
+  return (
+    <Sheet open={open} onClose={onClose} title={over !== null ? "That's over your limit" : "Thanks for being honest"}>
+      <p className="text-[16px] leading-snug text-ink-2">
+        {over !== null && `${formatValue(pact, over)} is more than ${formatValue(pact, limitOn(pact, day) ?? 0)}. `}
+        {!breaks
+          ? `That uses one of your ${allowed} ${subjectOf(pact)} days this week. ${allowed - used - 1 > 0 ? `${allowed - used - 1} left.` : "That was the last one."}`
+          : saved
+            ? `${unit} won't count, and the streak breaks${b.members.length > 1 ? (b.members.length === 2 ? " for both of you" : " for everyone") : ""}.${canFreeze ? ` A freeze keeps it going. You have ${state.freezesLeft} left.` : ""}`
+            : `${unit} won't count. ${weekly ? "Next week" : "Tomorrow"} is a fresh start.`}
+      </p>
+      {others.length > 0 && (
+        <p className="mt-3 rounded-2xl bg-mist p-3 text-[14px] text-ink-2">
+          {when === "today" ? `${listNames(others)} won't get a notification tonight. They'll hear tomorrow morning.` : `${listNames(others)} will see it next time they open the app.`}
+        </p>
+      )}
+      <div className="mt-4 grid gap-2">
+        {canFreeze ? (
+          <>
+            <button disabled={busy} onClick={() => go(true)} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-50">
+              {busy ? "Saving…" : needed === 1 ? "🧊 Use a freeze" : `🧊 Use ${needed} freezes`}
+            </button>
+            <button disabled={busy} onClick={() => go(false)} className="h-14 rounded-2xl bg-mist text-[17px] font-bold disabled:opacity-50">
+              Not this time
+            </button>
+          </>
+        ) : (
+          <button disabled={busy} onClick={() => go(false)} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-50">
+            {busy ? "Saving…" : "OK"}
+          </button>
+        )}
+      </div>
+    </Sheet>
+  );
+}
+
+/** "Having a craving?": your plan, and one tap to ask your partners for help. */
+function CravingSheet({ b, me, open, onClose }: { b: PactBundle; me: Me; open: boolean; onClose: () => void }) {
+  const others = b.members.filter((m) => m.user_id !== me.id).map((m) => firstName(m.name));
+  const [busy, setBusy] = useState(false);
+  const [asked, setAsked] = useState(false);
+
+  async function ask() {
+    setBusy(true);
+    const res = await askForHelp(b.pact.id);
+    setBusy(false);
+    if (!res.ok) return toast(res.error, "error");
+    setAsked(true);
+    toast(res.data?.sent ? `Sent to ${listNames(others)}` : `Asked. ${listNames(others)} hasn't turned on notifications yet.`);
+  }
+
+  return (
+    <Sheet open={open} onClose={onClose} title="Having a craving?">
+      {b.pact.craving_plan ? (
+        <div className="rounded-2xl bg-[var(--pact-soft)] p-4">
+          <p className="text-[13px] font-bold text-ink-2">Your plan</p>
+          <p className="mt-1 text-[19px] leading-snug font-extrabold">{b.pact.craving_plan}</p>
+        </div>
+      ) : (
+        <CravingPlanEditor b={b} me={me} compact />
+      )}
+      <p className="mt-4 text-[16px] leading-snug text-ink-2">Cravings come and go. Give it ten minutes before you decide anything.</p>
+      {others.length > 0 && (
+        <>
+          <button
+            disabled={busy || asked}
+            onClick={ask}
+            className="mt-4 h-14 w-full rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-50"
+          >
+            {asked ? "Asked" : busy ? "Sending…" : `Ask ${listNames(others)} for help`}
+          </button>
+          <p className="mt-2 text-center text-[13px] text-ink-3">One notification. It won&apos;t say what it&apos;s about.</p>
+        </>
+      )}
+      <button onClick={onClose} className="mt-2 mb-2 h-12 w-full text-[16px] font-bold text-ink-2">
+        I&apos;m OK
+      </button>
+    </Sheet>
+  );
+}
+
+/** The creator can write or change the plan for cravings; everyone else sees it. */
+function CravingPlanEditor({ b, me, compact }: { b: PactBundle; me: Me; compact?: boolean }) {
+  const owner = b.pact.created_by === me.id;
+  const [plan, setPlan] = useState(b.pact.craving_plan ?? "");
+  const [busy, setBusy] = useState(false);
+  const router = useRouter();
+  const what = subjectOf(b.pact);
+
+  if (!owner) {
+    if (compact || !b.pact.craving_plan) return null;
+    return <p className="mt-4 text-[15px] text-ink-2">Plan for cravings: {b.pact.craving_plan}</p>;
+  }
+
+  async function save() {
+    setBusy(true);
+    const res = await saveCravingPlan(b.pact.id, plan);
+    setBusy(false);
+    if (!res.ok) return toast(res.error, "error");
+    toast("Plan saved");
+    router.refresh();
+  }
+
+  return (
+    <div className={compact ? "" : "mt-4"}>
+      <p className="mb-2 text-[15px] font-bold text-ink-2">{compact ? "Make a plan for next time" : "Plan for cravings"}</p>
+      <div className="flex gap-2">
+        <input
+          maxLength={140}
+          value={plan}
+          onChange={(e) => setPlan(e.target.value)}
+          placeholder={`When I want ${what}, I'll…`}
+          aria-label="Plan for cravings"
+          className="h-12 min-w-0 flex-1 rounded-2xl bg-mist px-4 text-[16px] font-semibold outline-none focus:ring-2 focus:ring-[var(--pact)]"
+        />
+        <button disabled={busy || plan.trim() === (b.pact.craving_plan ?? "")} onClick={save} className="h-12 shrink-0 rounded-2xl bg-ink px-4 text-[15px] font-extrabold text-white disabled:opacity-40">
+          Save
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -856,6 +1309,10 @@ function Activity({ b, me }: { b: PactBundle; me: Me }) {
 /** "checked in", "did 5 km", plus how a check-in for an earlier day was logged */
 function activityLine(c: Checkin, b: PactBundle) {
   const did = c.value !== null && b.pact.measure !== "none" ? formatValue(b.pact, c.value) : null;
+  if (b.pact.kind === "break") {
+    const next = todayIn(b.pact.timezone, new Date(c.created_at)) > c.day ? ", answered the next day" : "";
+    return `${did ? `had ${did}` : "stayed off it"}${next}`;
+  }
   if (c.made_up) return did ? `made it up, did ${did}` : "made it up";
   const late = todayIn(b.pact.timezone, new Date(c.created_at)) > c.day;
   if (late) return did ? `did ${did}, logged late` : "checked in late";
@@ -948,7 +1405,7 @@ function Recap({ b, me }: { b: PactBundle; me: Me }) {
             <Avatar id={m.user_id} name={m.name} src={m.avatar_url} size={36} onTap={m.user_id === me.id ? undefined : () => logAvatarTap(pact.id, m.user_id)} />
             <span className="flex-1 text-[16px] font-bold">{m.name}</span>
             <span className="tnum text-right text-[15px] text-ink-2">
-              {count} check-ins{extra}
+              {pact.kind === "break" ? `${count} ${count === 1 ? "day" : "days"} kept` : `${count} check-ins${extra}`}
             </span>
           </li>
         ))}
@@ -1085,7 +1542,11 @@ function MenuSheet({ b, me, open, onClose }: { b: PactBundle; me: Me; open: bool
     >
       <dl className="space-y-3 rounded-2xl bg-mist p-4 text-[15px]">
         <Row k="Schedule" v={cadenceText(b.pact)} />
-        <Row k="Tracking" v={b.pact.measure === "none" ? "Streak only" : targetText(b.pact) ?? (b.pact.measure === "time" ? "Time" : b.pact.unit ?? "")} />
+        {b.pact.kind === "break" ? (
+          <Row k="Asks" v={b.pact.ask_next_morning ? "Each morning, about yesterday" : "From 6pm, or the next morning"} />
+        ) : (
+          <Row k="Tracking" v={b.pact.measure === "none" ? "Streak only" : targetText(b.pact) ?? (b.pact.measure === "time" ? "Time" : b.pact.unit ?? "")} />
+        )}
         <Row k="Dates" v={`${formatDay(b.pact.start_date, { day: "numeric", month: "short" })} to ${formatDay(b.state.endDate, { day: "numeric", month: "short" })}`} />
         <Row k="Freezes" v={`${b.state.freezesLeft} of ${b.pact.freezes_allowed} left, shared`} />
         <Row k="Day ends" v={`Midnight, ${b.pact.timezone.replace(/_/g, " ")}`} />
@@ -1100,8 +1561,11 @@ function MenuSheet({ b, me, open, onClose }: { b: PactBundle; me: Me; open: bool
           className="mt-4 h-14 w-full rounded-2xl bg-ink text-[17px] font-extrabold text-white"
         />
       )}
+      {b.pact.kind === "break" && <CravingPlanEditor b={b} me={me} />}
       <p className="mt-5 text-[14px] leading-snug text-ink-2">
-        The chain closes a link when everyone checks in. Miss a day and you can still make it up the next day, until midnight, or anyone can use a freeze then. Otherwise the chain breaks for the whole group.
+        {b.pact.kind === "break"
+          ? "Each day closes a link when everyone says they stayed off it. You can answer until midnight the next day. If anyone gives in, the chain breaks for the whole group, unless someone uses a freeze. Notifications only come in the morning, and never say what the pact is about."
+          : "The chain closes a link when everyone checks in. Miss a day and you can still make it up the next day, until midnight, or anyone can use a freeze then. Otherwise the chain breaks for the whole group."}
       </p>
       <button
         disabled={busy}

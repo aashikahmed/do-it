@@ -1,6 +1,6 @@
 import type { PactBundle } from "./data";
 import { formatDay, diffDays, type Day } from "./dates";
-import type { Cadence } from "./streak";
+import { limitOn, type Cadence, type Kind } from "./streak";
 
 export function listNames(names: string[], max = 2) {
   if (names.length === 0) return "";
@@ -19,6 +19,8 @@ export function makeUpLabel(cadence: Cadence, late: { start: Day }) {
   return cadence === "daily" ? formatDay(late.start, { weekday: "long" }) : "last week";
 }
 
+const num = (n: number) => new Intl.NumberFormat("en", { maximumFractionDigits: 2 }).format(n);
+
 export function capitalize(s: string) {
   return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
@@ -33,7 +35,52 @@ export function othersOwingMakeUp(b: PactBundle, me: string) {
   return (b.state.late?.owing ?? []).filter((u) => u !== me).map((u) => firstName(b.allMembers.find((m) => m.user_id === u)?.name ?? "Someone"));
 }
 
-export function cadenceText(p: { cadence: "daily" | "weekly"; times_per_week: number; duration_days: number }) {
+const WEEKDAYS = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+
+/** "except Fridays", "except Saturdays and Sundays" (Monday first) */
+export function restDaysText(mask: number) {
+  if (!mask) return "";
+  const days = [1, 2, 3, 4, 5, 6, 0].filter((d) => mask & (1 << d)).map((d) => WEEKDAYS[d]);
+  return `except ${listNames(days, days.length)}`;
+}
+
+/** what a break pact gives up, for sentences: "soda" */
+export function subjectOf(p: { subject?: string | null; title: string }) {
+  return (p.subject || p.title).trim();
+}
+
+type ScheduleBits = {
+  cadence: "daily" | "weekly";
+  times_per_week: number;
+  duration_days: number;
+  kind?: Kind;
+  subject?: string | null;
+  measure?: string;
+  target?: number | null;
+  unit?: string | null;
+  rest_days?: number;
+  limit_step?: number | null;
+};
+
+/** The days a break pact allows each week ("some days a week"). */
+export function allowedDays(p: { times_per_week: number }) {
+  return 7 - p.times_per_week;
+}
+
+export function cadenceText(p: ScheduleBits) {
+  if (p.kind === "break") {
+    const weeks = Math.round(p.duration_days / 7);
+    const off = p.rest_days ? `, ${restDaysText(p.rest_days)}` : "";
+    if (p.cadence === "weekly") {
+      const n = allowedDays(p);
+      return `Up to ${n} ${n === 1 ? "day" : "days"} a week, for ${weeks} weeks`;
+    }
+    if (p.measure === "count" && p.target) {
+      const less = p.limit_step ? `, ${num(p.limit_step)} less each week` : "";
+      return `Up to ${num(p.target)} ${p.unit ?? ""} a day${less}${off}, for ${p.duration_days} days`.replace(/ +/g, " ");
+    }
+    return `Every day${off}, for ${p.duration_days} days`;
+  }
   if (p.cadence === "daily") return `Every day for ${p.duration_days} days`;
   const weeks = Math.round(p.duration_days / 7);
   const freq = p.times_per_week === 1 ? "Once a week" : `${p.times_per_week} times a week`;
@@ -71,6 +118,10 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
   if (state.phase === "upcoming") {
     return others.length ? { text: `${startsText(pact.start_date, b.today)} with ${listNames(others.map((m) => firstName(m.name)))}`, tone: "info" } : { text: "Invite someone before it starts", tone: "info" };
   }
+  if (pact.kind === "break") {
+    if (owesYesterdayAnswer(b, me)) return { text: "How did yesterday go?", tone: "act" };
+    if (state.late) return { text: `Waiting on ${listNames(othersOwingMakeUp(b, me))} to answer for yesterday`, tone: "wait" };
+  }
   if (state.late) {
     const day = makeUpLabel(pact.cadence, state.late);
     if (owesMakeUp(b, me)) return { text: `${capitalize(day)} is still open. Make it up today.`, tone: "risk" };
@@ -81,6 +132,7 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
     return { text: `${state.completion.done + state.periods.filter((p) => p.status === "frozen").length} of ${state.completion.total} ${unit} closed`, tone: "info" };
   }
   if (state.repair) return { text: `Streak broke. A freeze can save it.`, tone: "risk" };
+  if (pact.kind === "break") return breakLine(b, me);
 
   const cur = state.current!;
   const need = state.need;
@@ -108,6 +160,48 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
   return { text: pact.cadence === "daily" ? "Everyone's in today" : "Everyone hit the target this week", tone: "done" };
 }
 
+/** Where a break pact stands right now. Never a nudge to answer today: the app asks in the morning. */
+function breakLine(b: PactBundle, me: string): { text: string; tone: Tone } {
+  const { state, pact } = b;
+  const cur = state.current!;
+  const what = subjectOf(pact);
+  if (cur.rest) return { text: "Day off today", tone: "info" };
+  if (cur.status === "missed") return { text: "Back at it tomorrow", tone: "info" };
+  if (pact.cadence === "weekly") {
+    const allowed = allowedDays(pact);
+    const left = Math.max(0, allowed - (cur.slips[me] ?? 0));
+    return { text: left === 0 ? `No ${what} days left this week` : `${left} of ${allowed} ${what} ${allowed === 1 ? "day" : "days"} left this week`, tone: "info" };
+  }
+  const n = state.streak;
+  if (n === 0) return { text: "A fresh start today", tone: "info" };
+  const days = n === 1 ? "day" : "days";
+  return { text: pact.measure === "count" ? `${n} ${days} within your limit` : `${n} ${days} without ${what}`, tone: "done" };
+}
+
+/**
+ * Break pacts: does this person still need to answer for yesterday? Daily pacts: yesterday's link is waiting on
+ * them. Weekly ones: every day counts toward the week, so any unanswered yesterday in a week that's still open.
+ */
+export function owesYesterdayAnswer(b: PactBundle, userId: string) {
+  if (b.pact.kind !== "break") return false;
+  const y = b.yesterday;
+  if (y < b.pact.start_date || y > b.state.endDate) return false;
+  const p = b.state.periods.find((x) => x.start <= y && y <= x.end);
+  if (!p || p.rest || !p.required.includes(userId)) return false;
+  if (p.status !== "late" && p.status !== "open") return false;
+  if (p.status === "late" && !p.owing.includes(userId)) return false;
+  return answerOn(b, userId, y) === null;
+}
+
+/** A break pact's answer for a day: "yes" (stayed off it / within the limit), "no" (gave in), or none yet. */
+export function answerOn(b: PactBundle, userId: string, day: Day): "yes" | "no" | null {
+  if (b.misses.some((m) => m.user_id === userId && m.day === day)) return "no";
+  const c = b.checkins.find((x) => x.user_id === userId && x.day === day);
+  if (!c) return null;
+  const limit = limitOn(b.pact, day);
+  return limit !== null && c.value !== null && c.value > limit ? "no" : "yes";
+}
+
 /** has this person done their part for the current period (today for daily, the weekly target for weekly)? */
 export function didTheirPart(b: PactBundle, id: string) {
   const cur = b.state.current;
@@ -117,6 +211,8 @@ export function didTheirPart(b: PactBundle, id: string) {
 }
 
 export function needsMe(b: PactBundle, me: string) {
+  // break pacts only ever need you for yesterday; today is answered when you like, never chased
+  if (b.pact.kind === "break") return owesYesterdayAnswer(b, me);
   if (b.state.phase !== "active" || !b.state.current) return false;
   if (!b.state.current.required.includes(me)) return false;
   if (b.pact.cadence === "daily") return !b.checkins.some((c) => c.user_id === me && c.day === b.today);

@@ -2,8 +2,8 @@ import "server-only";
 import { redirect } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "./supabase/server";
-import { addDays, todayIn, type Day } from "./dates";
-import { computePactState, type Cadence, type PactState } from "./streak";
+import { addDays, hourIn, todayIn, type Day } from "./dates";
+import { computePactState, type Cadence, type Kind, type PactState } from "./streak";
 import type { Direction, Measure } from "./measure";
 import { buildSeries, seriesIds, type RoundLink, type Series } from "./rounds";
 
@@ -30,6 +30,25 @@ export interface Pact {
   /** the round this one follows ("Go again"); null for a first round */
   previous_id: string | null;
   round: number;
+  /** build (do something) or break (stop or cut down) */
+  kind: Kind;
+  /** break pacts: what's being given up, as typed ("soda") */
+  subject: string | null;
+  /** days off, as a weekday bitmask (bit 0 = Sunday) */
+  rest_days: number;
+  /** "a little each day": lower the limit by this much each week */
+  limit_step: number | null;
+  /** break pacts: today can only be answered the next morning */
+  ask_next_morning: boolean;
+  craving_plan: string | null;
+}
+
+/** Break pacts open today's question at 6pm (pact time), or not at all when they ask the next morning. */
+export const ANSWER_FROM_HOUR = 18;
+
+export function canAnswerToday(p: Pick<Pact, "kind" | "ask_next_morning" | "timezone">, now: Date = new Date()) {
+  if (p.kind !== "break") return true;
+  return !p.ask_next_morning && hourIn(p.timezone, now) >= ANSWER_FROM_HOUR;
 }
 
 export interface Member {
@@ -64,8 +83,10 @@ export interface PactBundle {
   freezes: { period_start: Day; used_by: string | null }[];
   /** nudges sent today (pact timezone) */
   nudges: { from_user: string; to_user: string }[];
-  /** "I missed it" calls about yesterday */
+  /** "I missed it" calls (build pacts) and every "I gave in" (break pacts) */
   misses: { user_id: string; day: Day }[];
+  /** whether today can be answered yet (break pacts open at 6pm) */
+  canAnswerToday: boolean;
   state: PactState;
   today: Day;
   yesterday: Day;
@@ -123,8 +144,8 @@ async function loadBundles(supabase: SupabaseClient, pactIds?: string | string[]
     ),
     scope(supabase.from("freezes").select("pact_id,period_start,used_by"), "pact_id"),
     scope(supabase.from("nudges").select("pact_id,from_user,to_user,day").gte("day", addDays(todayIn("UTC"), -2)), "pact_id"),
-    // only yesterday's calls matter
-    scope(supabase.from("misses").select("pact_id,user_id,day").gte("day", addDays(todayIn("UTC"), -3)), "pact_id"),
+    // build pacts only need yesterday's calls; break pacts show every "I gave in" in their history
+    fetchAll<Row>(() => scope(supabase.from("misses").select("pact_id,user_id,day"), "pact_id").order("day").order("user_id")),
   ]);
   for (const r of [pacts, members, checkins, freezes, nudges, misses]) if (r.error) throw new Error(r.error.message);
 
@@ -148,13 +169,14 @@ async function loadBundles(supabase: SupabaseClient, pactIds?: string | string[]
       .map((n) => ({ from_user: n.from_user as string, to_user: n.to_user as string }));
     const calls = ((misses.data ?? []) as Row[]).filter((x) => x.pact_id === pact.id).map((x) => ({ user_id: x.user_id as string, day: x.day as Day }));
     return {
-      pact: { ...pact, target: pact.target === null ? null : Number(pact.target) },
+      pact: { ...pact, target: pact.target === null ? null : Number(pact.target), limit_step: pact.limit_step === null ? null : Number(pact.limit_step) },
       members: ms.filter((m) => !m.left_on),
       allMembers: ms,
       checkins: cs,
       freezes: fz.map((f) => ({ period_start: f.period_start, used_by: f.used_by })),
       nudges: nd,
       misses: calls,
+      canAnswerToday: canAnswerToday(pact),
       state: computePactState(pact, ms, cs, fz.map((f) => f.period_start), today, calls),
       today,
       yesterday: addDays(today, -1),

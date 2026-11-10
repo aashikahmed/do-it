@@ -46,6 +46,11 @@ export function addDays(d: Day, n: number): Day {
   return new Date(toUtc(d) + n * 86_400_000).toISOString().slice(0, 10);
 }
 
+/** 0 = Sunday … 6 = Saturday, like Postgres extract(dow) */
+export function weekdayOf(d: Day): number {
+  return new Date(toUtc(d)).getUTCDay();
+}
+
 /** b - a in whole days */
 export function diffDays(a: Day, b: Day): number {
   return Math.round((toUtc(b) - toUtc(a)) / 86_400_000);
