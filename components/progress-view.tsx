@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import type { Checkin, Me, PactBundle } from "@/lib/data";
 import { diffDays, formatDay } from "@/lib/dates";
 import { FEELS, formatDuration, formatShort, formatValue, pactDays, progressStats, type Tracking } from "@/lib/measure";
-import { firstName } from "@/lib/view";
+import { answerOn, firstName } from "@/lib/view";
+import { isRestDay } from "@/lib/streak";
 import { Avatar } from "./avatar";
 
 /** Distinct, high-contrast line colors for comparing people (avatar colors can collide). */
@@ -44,7 +45,7 @@ export function ProgressView({ b, me }: { b: PactBundle; me: Me }) {
 
       {tracked && who === "all" && <Compare b={b} people={people} me={me.id} />}
       {tracked && who !== "all" && <Personal b={b} t={t} checkins={mine(who)} color="var(--pact-deep)" />}
-      {who !== "all" && <FeelCalendar b={b} checkins={mine(who)} />}
+      {who !== "all" && (pact.kind === "break" ? <DaysCalendar b={b} who={who} /> : <FeelCalendar b={b} checkins={mine(who)} />)}
       {who !== "all" && <Notes b={b} t={t} checkins={mine(who)} />}
     </div>
   );
@@ -304,6 +305,48 @@ function FeelCalendar({ b, checkins }: { b: PactBundle; checkins: Checkin[] }) {
           <i className="inline-block h-3 w-3 rounded-[4px] bg-[var(--pact-soft)]" />
           No rating
         </span>
+      </div>
+    </section>
+  );
+}
+
+/** Break pacts: each day kept, given in, off, or not answered. Nothing to rate, so no feel colours. */
+function DaysCalendar({ b, who }: { b: PactBundle; who: string }) {
+  const days = pactDays(b.pact.start_date, b.pact.duration_days, b.today);
+  const kinds = days.map((d) => (isRestDay(b.pact, d) ? "off" : answerOn(b, who, d) ?? "none"));
+  const kept = kinds.filter((k) => k === "yes").length;
+  const gave = kinds.filter((k) => k === "no").length;
+  const style: Record<string, React.CSSProperties> = {
+    yes: { backgroundColor: "var(--pact)", color: "var(--pact-ink)" },
+    no: { backgroundColor: "#ffe2db", color: "#c4381b" },
+    off: { boxShadow: "inset 0 0 0 1.5px var(--color-line)", backgroundImage: "radial-gradient(var(--color-line) 1px, transparent 1.4px)", backgroundSize: "6px 6px", color: "var(--color-ink-3)" },
+    none: { boxShadow: "inset 0 0 0 1.5px var(--color-line)", color: "var(--color-ink-3)" },
+  };
+  const label: Record<string, string> = { yes: "Kept", no: "Gave in", off: "Day off", none: "No answer" };
+  return (
+    <section className="rounded-[24px] bg-paper p-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-[17px] font-extrabold">Day by day</h3>
+        <span className="text-[13px] font-semibold text-ink-3">
+          {kept} kept{gave ? `, ${gave} gave in` : ""}
+        </span>
+      </div>
+      {days.length > 0 && (
+        <div className="mt-3 grid grid-cols-7 gap-1.5" role="img" aria-label={`${kept} days kept and ${gave} given in, over ${days.length} days`}>
+          {days.map((d, i) => (
+            <span key={d} title={`${formatDay(d)}: ${label[kinds[i]]}`} className="flex aspect-square items-center justify-center rounded-[9px] text-[11px] font-bold" style={style[kinds[i]]}>
+              {Number(d.slice(8))}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] font-bold text-ink-3">
+        {(["yes", "no", "off", "none"] as const).map((k) => (
+          <span key={k} className="flex items-center gap-1.5">
+            <i className="inline-block h-3 w-3 rounded-[4px]" style={style[k]} />
+            {label[k]}
+          </span>
+        ))}
       </div>
     </section>
   );

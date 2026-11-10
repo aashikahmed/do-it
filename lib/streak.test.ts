@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addDays, diffDays, todayIn } from "./dates";
-import { computePactState, freezesFor, type CheckinCore, type PactCore } from "./streak";
+import { computePactState, freezesFor, isRestDay, limitOn, type CheckinCore, type PactCore } from "./streak";
 
 const daily: PactCore = { cadence: "daily", times_per_week: 7, duration_days: 30, start_date: "2026-11-01", freezes_allowed: 3 };
 const A = "a";
@@ -318,5 +318,122 @@ describe("freezesFor", () => {
     expect(freezesFor("daily", 30)).toBe(3);
     expect(freezesFor("weekly", 28)).toBe(1);
     expect(freezesFor("weekly", 84)).toBe(3);
+  });
+});
+
+describe("break pacts", () => {
+  const quit: PactCore = { ...daily, kind: "break" };
+  const slip = (u: string, day: string) => ({ user_id: u, day });
+
+  it("a yes for every day keeps the chain, like a check-in", () => {
+    const days = range("2026-11-01", 3);
+    const s = computePactState(quit, both, [...ci(A, ...days), ...ci(B, ...days)], [], "2026-11-04");
+    expect(s.streak).toBe(3);
+    expect(s.current?.status).toBe("open");
+  });
+
+  it("giving in today loses today right away and resets the streak", () => {
+    const days = range("2026-11-01", 3);
+    const s = computePactState(quit, both, [...ci(A, ...days), ...ci(B, ...days)], [], "2026-11-04", [slip(A, "2026-11-04")]);
+    expect(s.current?.status).toBe("missed");
+    expect(s.current?.slips[A]).toBe(1);
+    expect(s.streak).toBe(0);
+    expect(s.best).toBe(3);
+    // and a freeze can save it today
+    expect(s.repair).toEqual({ periods: ["2026-11-04"], previous: 3 });
+  });
+
+  it("a frozen slip today keeps the streak going", () => {
+    const days = range("2026-11-01", 3);
+    const s = computePactState(quit, both, [...ci(A, ...days), ...ci(B, ...days)], ["2026-11-04"], "2026-11-04", [slip(A, "2026-11-04")]);
+    expect(s.current?.status).toBe("frozen");
+    expect(s.streak).toBe(4);
+    expect(s.repair).toBeNull();
+  });
+
+  it("giving in yesterday is a miss, not something to make up", () => {
+    const days = range("2026-11-01", 3);
+    const s = computePactState(quit, both, [...ci(A, ...days), ...ci(B, ...days), ...ci(A, "2026-11-04")], [], "2026-11-05", [slip(B, "2026-11-04")]);
+    expect(s.periods[3].status).toBe("missed");
+    expect(s.late).toBeNull();
+    expect(s.streak).toBe(0);
+  });
+
+  it("an unanswered yesterday is still open until midnight", () => {
+    const days = range("2026-11-01", 4);
+    const s = computePactState(quit, both, [...ci(A, ...days), ...ci(B, ...days.slice(0, 3))], [], "2026-11-05");
+    expect(s.late?.start).toBe("2026-11-04");
+    expect(s.late?.owing).toEqual([B]);
+    expect(s.streak).toBe(3);
+  });
+
+  describe("some days a week", () => {
+    // sugar on up to 3 days a week: 4 days off it needed
+    const sugar: PactCore = { cadence: "weekly", times_per_week: 4, duration_days: 28, start_date: "2026-11-02", freezes_allowed: 1, kind: "break" };
+
+    it("days within the allowance don't break the week", () => {
+      const s = computePactState(sugar, both, [...ci(A, "2026-11-02", "2026-11-04")], [], "2026-11-05", [slip(A, "2026-11-03"), slip(A, "2026-11-05")]);
+      expect(s.current?.status).toBe("open");
+      expect(s.current?.slips[A]).toBe(2);
+    });
+
+    it("one day over the allowance breaks the week straight away", () => {
+      const slips = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"].map((d) => slip(A, d));
+      const s = computePactState(sugar, both, [], [], "2026-11-05", slips);
+      expect(s.current?.status).toBe("missed");
+    });
+
+    it("closes once everyone has their days off it", () => {
+      const four = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"];
+      const s = computePactState(sugar, both, [...ci(A, ...four), ...ci(B, ...four)], [], "2026-11-05");
+      expect(s.current?.status).toBe("done");
+      expect(s.streak).toBe(1);
+    });
+  });
+
+  describe("a little each day", () => {
+    const coffee: PactCore = { ...quit, target: 2 };
+
+    it("over the limit doesn't count", () => {
+      const s = computePactState(
+        coffee,
+        [both[0]],
+        [
+          { user_id: A, day: "2026-11-01", value: 2 },
+          { user_id: A, day: "2026-11-02", value: 3 },
+        ],
+        [],
+        "2026-11-03",
+      );
+      expect(s.periods[0].status).toBe("done");
+      expect(s.periods[1].status).toBe("missed");
+    });
+
+    it("the limit goes down each week when asked to", () => {
+      const taper: PactCore = { ...coffee, target: 10, limit_step: 2 };
+      expect(limitOn(taper, "2026-11-01")).toBe(10);
+      expect(limitOn(taper, "2026-11-08")).toBe(8);
+      expect(limitOn(taper, "2026-12-30")).toBe(0);
+      expect(limitOn({ ...taper, kind: "build" }, "2026-11-01")).toBeNull();
+    });
+  });
+
+  describe("days off", () => {
+    // 2026-11-06 is a Friday
+    const fridaysOff: PactCore = { ...quit, rest_days: 1 << 5 };
+
+    it("knows which days are off", () => {
+      expect(isRestDay(fridaysOff, "2026-11-06")).toBe(true);
+      expect(isRestDay(fridaysOff, "2026-11-05")).toBe(false);
+      expect(isRestDay({ ...fridaysOff, cadence: "weekly" }, "2026-11-06")).toBe(false);
+    });
+
+    it("a day off counts as kept without anyone answering", () => {
+      const days = ["2026-11-03", "2026-11-04", "2026-11-05", "2026-11-07"];
+      const s = computePactState({ ...fridaysOff, start_date: "2026-11-03" }, [both[0]], ci(A, ...days), [], "2026-11-07");
+      expect(s.periods[3].rest).toBe(true);
+      expect(s.periods[3].status).toBe("done");
+      expect(s.streak).toBe(5);
+    });
   });
 });

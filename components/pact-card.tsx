@@ -1,13 +1,14 @@
 import Link from "next/link";
 import type { PactBundle } from "@/lib/data";
-import { didTheirPart, needsMe, owesMakeUp, progressText, statusLine, streakUnit } from "@/lib/view";
+import { answerOn, didTheirPart, needsMe, owesMakeUp, progressText, statusLine, streakUnit } from "@/lib/view";
 import { Avatar } from "./avatar";
 import { Chain, recentWindow } from "./chain";
 
 export function PactCard({ b, me }: { b: PactBundle; me: string }) {
   const line = statusLine(b, me);
   const mine = needsMe(b, me);
-  const makeUp = owesMakeUp(b, me);
+  const isBreak = b.pact.kind === "break";
+  const makeUp = !isBreak && owesMakeUp(b, me);
   const recent = recentWindow(b.state.periods, b.state.current?.index ?? null, 7);
   const ended = b.state.phase === "ended";
 
@@ -54,7 +55,7 @@ export function PactCard({ b, me }: { b: PactBundle; me: string }) {
               src={m.avatar_url}
               size={30}
               ring="#fff"
-              done={!ended && b.state.phase === "active" && didTheirPart(b, m.user_id)}
+              done={!ended && b.state.phase === "active" && (isBreak ? answerOn(b, m.user_id, b.today) === "yes" : didTheirPart(b, m.user_id))}
             />
           ))}
         </div>
@@ -64,7 +65,7 @@ export function PactCard({ b, me }: { b: PactBundle; me: string }) {
         ) : b.state.repair && !b.state.late ? (
           <span className="shrink-0 rounded-full bg-ice px-3 py-1.5 text-[13px] font-extrabold text-ink">Freeze</span>
         ) : (
-          mine && <span className="shrink-0 rounded-full bg-white px-3 py-1.5 text-[13px] font-extrabold text-ink">Your turn</span>
+          mine && <span className="shrink-0 rounded-full bg-white px-3 py-1.5 text-[13px] font-extrabold text-ink">{isBreak ? "Answer" : "Your turn"}</span>
         )}
       </div>
     </Link>

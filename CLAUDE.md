@@ -6,6 +6,7 @@
 - Stack: Next.js 16 (Cache Components ON, Partial Prefetching ON), Supabase, web-push. Mobile-only UI (440px column).
 - Every page = sync shell + `<Suspense>` around the data component. Anything reading cookies/auth goes behind Suspense; `lib/supabase/server.ts` calls `connection()` first.
 - Rounds: "Go again" = `start_next_round()` RPC → new pact with `previous_id`/`round`; lifetime totals in `lib/rounds.ts`. Home hides a finished round once it has a next round.
+- Build vs break pacts: `pacts.kind`. Break pacts reuse check-ins (yes) and `misses` (I gave in), ask from 6pm or the next morning, and never send evening pushes or name the habit in a notification (cron `breakMorning`). README "Break a habit" has the rules.
 - Streak logic lives only in `lib/streak.ts` (pure, tested). SQL mirrors the rules that must be enforced (check-in window trigger, freeze cap trigger, `create_pact` freeze allowance = `freezesFor`). Keep them in sync.
 - New functions start with no EXECUTE for anyone (default privileges, `20261113000000_lock_down_functions.sql`): grant each RPC to `authenticated` (and `anon` only if signed-out pages call it). `drop` + `create` loses grants; `create or replace` keeps them.
 - New tables need explicit GRANTs + RLS, even service-role-only ones (enable RLS, add no policies). Local doesn't auto-grant, but hosted prod has: don't treat a missing grant as protection. Column-level UPDATE grants protect fields like `freezes_allowed`, and only work with no table-wide UPDATE grant.

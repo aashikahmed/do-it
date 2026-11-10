@@ -4,6 +4,7 @@ import type { Period, PeriodStatus } from "@/lib/streak";
  * The chain: one link per period. Links overlap like a real chain.
  * done = closed link · frozen = ice link · missed = broken link · open = breathing dashed link · upcoming = faint.
  * late = yesterday, still fixable: a broken link with a breathing gap. A link closed by a make-up gets a small stitch.
+ * A day off (break pacts) is a dotted link: kept, but nothing was asked.
  */
 const W = 40;
 const H = 26;
@@ -19,7 +20,7 @@ export function Chain({
   label,
   fluid,
 }: {
-  periods: (Pick<Period, "status" | "start" | "index"> & { madeUp?: boolean })[];
+  periods: (Pick<Period, "status" | "start" | "index"> & { madeUp?: boolean; rest?: boolean })[];
   perRow?: number;
   tone?: "onColor" | "onLight";
   size?: number;
@@ -48,7 +49,7 @@ export function Chain({
     >
       {rows.map((row, r) =>
         row.map((p, i) => (
-          <Link key={p.index} x={i * STEP} y={r * ROW} status={p.status} tone={tone} madeUp={p.madeUp} />
+          <Link key={p.index} x={i * STEP} y={r * ROW} status={p.status} tone={tone} madeUp={p.madeUp} rest={p.rest} />
         )),
       )}
     </svg>
@@ -88,7 +89,7 @@ function colors(status: PeriodStatus, tone: "onColor" | "onLight") {
   }
 }
 
-function Link({ x, y, status, tone, madeUp }: { x: number; y: number; status: PeriodStatus; tone: "onColor" | "onLight"; madeUp?: boolean }) {
+function Link({ x, y, status, tone, madeUp, rest }: { x: number; y: number; status: PeriodStatus; tone: "onColor" | "onLight"; madeUp?: boolean; rest?: boolean }) {
   const { stroke, opacity } = colors(status, tone);
   const rx = W / 2 - SW / 2;
   const ry = H / 2 - SW / 2;
@@ -102,6 +103,8 @@ function Link({ x, y, status, tone, madeUp }: { x: number; y: number; status: Pe
     offset = c * 0.2;
   } else if (status === "open") {
     dash = `${c / 14} ${c / 28}`;
+  } else if (rest) {
+    dash = `0.1 ${c / 12}`;
   }
   return (
     <g transform={`translate(${x + W / 2} ${y + H / 2})`} opacity={opacity} className={status === "open" || status === "late" ? "link-open" : undefined}>

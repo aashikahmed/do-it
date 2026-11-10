@@ -23,6 +23,10 @@ type Preview = {
   direction: Direction;
   unit: string | null;
   target: number | null;
+  kind?: "build" | "break";
+  subject?: string | null;
+  rest_days?: number;
+  limit_step?: number | null;
   ended: boolean;
   members: { id: string; name: string }[];
 };
@@ -72,7 +76,7 @@ async function Invite({ params }: { params: PageProps<"/j/[code]">["params"] }) 
         <ul className="mt-6 space-y-1.5 text-[17px] font-medium opacity-90">
           <li>{cadenceText(p)}</li>
           <li>{started ? `Day ${Math.min(diffDays(p.start_date, today) + 1, p.duration_days)} of ${p.duration_days}` : startsText(p.start_date, today)}</li>
-          {p.measure !== "none" && <li>{targetText(p) ?? `Tracking ${p.measure === "time" ? "time" : p.unit}`}</li>}
+          {p.measure !== "none" && p.kind !== "break" && <li>{targetText(p) ?? `Tracking ${p.measure === "time" ? "time" : p.unit}`}</li>}
           <li>{listNames(names, 3)} {names.length === 1 ? "is" : "are"} in</li>
         </ul>
       </div>
@@ -82,7 +86,9 @@ async function Invite({ params }: { params: PageProps<"/j/[code]">["params"] }) 
         <div className="space-y-3">
           <JoinButton code={code} signedIn={!!userId} />
           <p className="text-center text-[14px] opacity-75">
-            Check in each day. If anyone misses, the streak breaks for everyone.
+            {p.kind === "break"
+              ? "Each morning you say how yesterday went. If anyone gives in, the streak breaks for everyone."
+              : "Check in each day. If anyone misses, the streak breaks for everyone."}
           </p>
         </div>
       )}

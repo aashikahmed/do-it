@@ -38,6 +38,12 @@ function friendly(msg: string | undefined) {
     "This pact is still going",
     "Only yesterday can be made up",
     "Only yesterday can be called a miss",
+    "You can answer for today from 6pm",
+    "This pact asks about each day the next morning",
+    "You said you gave in that day",
+    "You can only say so about today or yesterday",
+    "Say what you're giving up",
+    "Set a daily limit",
   ];
   const hit = known.find((k) => msg.includes(k));
   if (hit) return hit;
@@ -80,6 +86,14 @@ const createSchema = z.object({
   direction: z.enum(["up", "down"]),
   unit: z.string().trim().max(24).optional(),
   target: z.number().positive().max(999999).nullable().optional(),
+  kind: z.enum(["build", "break"]).default("build"),
+  /** break pacts: what's being given up */
+  subject: z.string().trim().max(40).optional(),
+  /** weekday bitmask, bit 0 = Sunday; never every day */
+  restDays: z.number().int().min(0).max(126).optional(),
+  limitStep: z.number().positive().max(999999).nullable().optional(),
+  askNextMorning: z.boolean().optional(),
+  cravingPlan: z.string().trim().max(140).optional(),
 });
 
 export async function createPact(input: z.input<typeof createSchema>): Promise<ActionResult<{ id: string; code: string }>> {
@@ -101,6 +115,12 @@ export async function createPact(input: z.input<typeof createSchema>): Promise<A
     p_direction: v.direction,
     p_unit: v.unit || null,
     p_target: v.measure !== "none" && v.target ? v.target : null,
+    p_kind: v.kind,
+    p_subject: v.kind === "break" ? v.subject || null : null,
+    p_rest_days: v.kind === "break" && v.cadence === "daily" ? v.restDays ?? 0 : 0,
+    p_limit_step: v.kind === "break" && v.measure === "count" ? v.limitStep ?? null : null,
+    p_ask_next_morning: v.kind === "break" && !!v.askNextMorning,
+    p_craving_plan: v.kind === "break" ? v.cravingPlan || null : null,
   });
   if (error || !id) return fail(friendly(error?.message));
   const { data: pact } = await supabase.from("pacts").select("invite_code").eq("id", id).single();
@@ -119,14 +139,20 @@ export async function joinPact(code: string): Promise<ActionResult<{ id: string 
     after(async () => {
       const admin = createAdminClient();
       const [{ data: pact }, { data: members }, name] = await Promise.all([
-        admin.from("pacts").select("title,emoji").eq("id", id).single(),
+        admin.from("pacts").select("title,emoji,kind").eq("id", id).single(),
         admin.from("pact_members").select("user_id").eq("pact_id", id).is("left_on", null),
         displayName(userId),
       ]);
       if (!pact) return;
       await sendPush(
         (members ?? []).map((m) => m.user_id).filter((u) => u !== userId),
-        { title: `${pact.emoji} ${name} is in`, body: `${name} joined ${pact.title}. The chain is shared now.`, url: `/p/${id}`, tag: `pact-${id}` },
+        {
+          title: `${pact.emoji} ${name} is in`,
+          // break pacts never name the habit in a notification
+          body: pact.kind === "break" ? `${firstName(name)} joined. The chain is shared now.` : `${name} joined ${pact.title}. The chain is shared now.`,
+          url: `/p/${id}`,
+          tag: `pact-${id}`,
+        },
       );
     });
   }
@@ -160,7 +186,7 @@ export async function startNextRound(pactId: string): Promise<ActionResult<{ id:
   after(async () => {
     const admin = createAdminClient();
     const [{ data: pact }, { data: members }, name] = await Promise.all([
-      admin.from("pacts").select("title,emoji,round,created_by").eq("id", id).single(),
+      admin.from("pacts").select("title,emoji,round,created_by,kind").eq("id", id).single(),
       admin.from("pact_members").select("user_id").eq("pact_id", id).is("left_on", null),
       displayName(userId),
     ]);
@@ -169,7 +195,7 @@ export async function startNextRound(pactId: string): Promise<ActionResult<{ id:
     await sendPush(
       (members ?? []).map((m) => m.user_id).filter((u) => u !== userId),
       {
-        title: `${pact.emoji} Round ${pact.round} of ${pact.title} is on`,
+        title: pact.kind === "break" ? `${pact.emoji} Round ${pact.round} is on` : `${pact.emoji} Round ${pact.round} of ${pact.title} is on`,
         body: `${name.split(" ")[0]} started it. You're in, starting today.`,
         url: `/p/${id}`,
         tag: `pact-${id}`,
@@ -197,7 +223,7 @@ export async function checkIn(input: z.input<typeof checkinSchema>): Promise<Act
   const parsed = checkinSchema.safeParse(input);
   if (!parsed.success) return fail("Check the details and try again");
   const { supabase, userId } = await requireUser();
-  const { data: pact } = await supabase.from("pacts").select("timezone").eq("id", parsed.data.pactId).maybeSingle();
+  const { data: pact } = await supabase.from("pacts").select("timezone,kind").eq("id", parsed.data.pactId).maybeSingle();
   if (!pact) return fail("Pact not found");
   const today = todayIn(pact.timezone);
   const v = { ...parsed.data, day: parsed.data.when === "today" ? today : addDays(today, -1) };
@@ -224,7 +250,8 @@ export async function checkIn(input: z.input<typeof checkinSchema>): Promise<Act
     if (error.message.includes("duplicate key")) return { ok: true, data: { created: false } };
     return fail(friendly(error.message));
   }
-  after(() => notifyCheckin(v.pactId, userId, v.day).catch((e) => console.error("notifyCheckin", e)));
+  // break pacts: partners hear how yesterday went in the morning, never in real time
+  if (pact.kind !== "break") after(() => notifyCheckin(v.pactId, userId, v.day).catch((e) => console.error("notifyCheckin", e)));
   refresh();
   return { ok: true, data: { created: true } };
 }
@@ -270,16 +297,20 @@ export async function nudge(input: { pactId: string; toUser: string; about?: "to
   if (!uuid.safeParse(input.pactId).success || !uuid.safeParse(input.toUser).success) return fail("Can't nudge right now");
   const { supabase, userId } = await requireUser();
   if (input.toUser === userId) return fail("You can't nudge yourself");
-  const { data: pact } = await supabase.from("pacts").select("id,title,emoji,timezone").eq("id", input.pactId).maybeSingle();
+  const { data: pact } = await supabase.from("pacts").select("id,title,emoji,timezone,kind").eq("id", input.pactId).maybeSingle();
   if (!pact) return fail("Pact not found");
   const today = todayIn(pact.timezone);
+  // break pacts: only ever about answering for yesterday, and never naming the habit
+  if (pact.kind === "break" && input.about !== "yesterday") return fail("You can nudge about yesterday, once it's over");
   const { error } = await supabase.from("nudges").insert({ pact_id: pact.id, from_user: userId, to_user: input.toUser, day: today });
   if (error) {
     if (error.message.includes("duplicate key")) return fail("Already nudged today");
     return fail(friendly(error.message));
   }
   const body =
-    input.about === "yesterday"
+    pact.kind === "break"
+      ? `${pact.emoji} How did yesterday go? Answer before midnight.`
+      : input.about === "yesterday"
       ? `${pact.emoji} ${pact.title}. There's still time to make up yesterday.`
       : `${pact.emoji} ${pact.title}. Still on for today?`;
   after(async () => {
@@ -311,7 +342,8 @@ export async function applyFreeze(pactId: string, which: "all" | "older" = "all"
   // one transaction in SQL: validates every period really was missed, all or nothing
   const { error } = await supabase.rpc("use_freezes", { p_pact: pactId, p_periods: periods });
   if (error) return fail(friendly(error.message));
-  after(async () => {
+  // break pacts: no pushes about the habit; partners see the frozen link next time they look
+  if (bundle.pact.kind !== "break") after(async () => {
     const name = await displayName(userId);
     await sendPush(
       bundle.members.map((m) => m.user_id).filter((u) => u !== userId),
@@ -327,14 +359,34 @@ export async function applyFreeze(pactId: string, which: "all" | "older" = "all"
   return { ok: true, data: { restored: repair.previous } };
 }
 
-/** "I missed it": yesterday can't be made up, so the link breaks now and the reminders stop. */
-export async function callMiss(pactId: string): Promise<ActionResult> {
+/**
+ * Build pacts: "I missed it" about yesterday. It can't be made up, so the link breaks now and the reminders stop.
+ * Break pacts: "I gave in", about today or yesterday. Replaces a yes for that day, and can spend a freeze at once.
+ * Partners of a break pact aren't pushed: they hear about it in the morning.
+ */
+export async function callMiss(pactId: string, opts: { when?: "today" | "yesterday"; freeze?: boolean } = {}): Promise<ActionResult<{ frozen: boolean }>> {
   if (!uuid.safeParse(pactId).success) return fail("Pact not found");
   const { supabase, userId } = await requireUser();
   const bundle = await getPactForUser(supabase, pactId);
   if (!bundle) return fail("Pact not found");
-  const { error } = await supabase.from("misses").insert({ pact_id: pactId, user_id: userId, day: bundle.yesterday });
+  const isBreak = bundle.pact.kind === "break";
+  const day = isBreak && opts.when === "today" ? bundle.today : bundle.yesterday;
+  const { error } = await supabase.from("misses").insert({ pact_id: pactId, user_id: userId, day });
   if (error && !error.message.includes("duplicate key")) return fail(friendly(error.message));
+  if (isBreak) {
+    let frozen = false;
+    if (opts.freeze) {
+      const fresh = await getPactForUser(supabase, pactId);
+      const repair = fresh?.state.repair;
+      if (repair && repair.periods.length <= fresh.state.freezesLeft) {
+        const { error: fe } = await supabase.rpc("use_freezes", { p_pact: pactId, p_periods: repair.periods });
+        if (fe) return fail(friendly(fe.message));
+        frozen = true;
+      }
+    }
+    refresh();
+    return { ok: true, data: { frozen } };
+  }
   if (!error) {
     after(async () => {
       const name = firstName(await displayName(userId));
@@ -355,6 +407,45 @@ export async function callMiss(pactId: string): Promise<ActionResult> {
       );
     });
   }
+  refresh();
+  return { ok: true, data: { frozen: false } };
+}
+
+/** "Having a craving?": one push to partners asking for backup, once a day. The habit isn't named. */
+export async function askForHelp(pactId: string): Promise<ActionResult<{ sent: number }>> {
+  if (!uuid.safeParse(pactId).success) return fail("Pact not found");
+  const { supabase, userId } = await requireUser();
+  const { data: pact } = await supabase.from("pacts").select("id,emoji,timezone,kind").eq("id", pactId).maybeSingle();
+  if (!pact || pact.kind !== "break") return fail("Pact not found");
+  const admin = createAdminClient();
+  const { data: claimed } = await admin
+    .from("checkin_notify_log")
+    .upsert({ pact_id: pactId, user_id: userId, day: todayIn(pact.timezone), kind: "help" }, { onConflict: "pact_id,user_id,day,kind", ignoreDuplicates: true })
+    .select("user_id");
+  if (!claimed?.length) return fail("You already asked today. Try a message instead.");
+  const [{ data: members }, name] = await Promise.all([
+    admin.from("pact_members").select("user_id").eq("pact_id", pactId).is("left_on", null),
+    displayName(userId),
+  ]);
+  const others = (members ?? []).map((m) => m.user_id).filter((u) => u !== userId);
+  if (!others.length) return fail("Invite someone first");
+  const res = await sendPush(others, {
+    title: `${pact.emoji} ${firstName(name)} could use a hand`,
+    body: "A quick message from you would help right now.",
+    url: `/p/${pactId}`,
+    tag: `help-${pactId}`,
+  });
+  return { ok: true, data: { sent: res.sent } };
+}
+
+/** The creator's plan for cravings ("When I want soda, I'll…"). */
+export async function saveCravingPlan(pactId: string, plan: string): Promise<ActionResult> {
+  const parsed = z.object({ pactId: uuid, plan: z.string().trim().max(140) }).safeParse({ pactId, plan });
+  if (!parsed.success) return fail("Keep it under 140 characters");
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.from("pacts").update({ craving_plan: parsed.data.plan || null }).eq("id", pactId).select("id");
+  if (error) return fail(friendly(error.message));
+  if (!data?.length) return fail("Only the person who started the pact can change this");
   refresh();
   return { ok: true };
 }
