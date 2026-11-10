@@ -1258,8 +1258,7 @@ function SoloInvite({ b }: { b: PactBundle }) {
       </p>
       <ShareInvite
         code={b.pact.invite_code}
-        title={b.pact.title}
-        emoji={b.pact.emoji}
+        pact={b.pact}
         label="Send invite link"
         className="mt-4 h-12 rounded-full bg-sun px-5 text-[16px] font-extrabold text-ink"
       />
@@ -1555,8 +1554,7 @@ function MenuSheet({ b, me, open, onClose }: { b: PactBundle; me: Me; open: bool
       {b.state.phase !== "ended" && (
         <ShareInvite
           code={b.pact.invite_code}
-          title={b.pact.title}
-          emoji={b.pact.emoji}
+          pact={b.pact}
           label="Invite someone"
           className="mt-4 h-14 w-full rounded-2xl bg-ink text-[17px] font-extrabold text-white"
         />

@@ -49,6 +49,56 @@ export function subjectOf(p: { subject?: string | null; title: string }) {
   return (p.subject || p.title).trim();
 }
 
+/** "Soda" → "soda" for use mid-sentence, but "TikTok" stays as typed. */
+export function inSentence(s: string) {
+  const t = s.trim();
+  return /[A-Z]/.test(t.slice(1)) ? t : t.charAt(0).toLowerCase() + t.slice(1);
+}
+
+export type BreakMode = "none" | "days" | "amount";
+
+/** What a break pact is called: "No soda" (none at all), "Less coffee" (some days, or a little each day). */
+export function breakTitle(subject: string, mode: BreakMode) {
+  const s = inSentence(subject);
+  return s ? `${mode === "none" ? "No" : "Less"} ${s}`.slice(0, 60) : "";
+}
+
+type Nameable = {
+  title?: string | null;
+  kind?: Kind | null;
+  subject?: string | null;
+  cadence?: Cadence;
+  measure?: string;
+};
+
+/** a break pact that allows none at all: daily, no amounts */
+const givesUpAll = (p: Nameable) => p.cadence !== "weekly" && (p.measure ?? "none") === "none";
+
+/**
+ * What a pact is called, for either kind: its title, or for a break pact without one, "No soda".
+ * Empty only when there's nothing to go on, so callers word the sentence around it.
+ */
+export function pactName(p: Nameable) {
+  const title = (p.title ?? "").trim();
+  if (title) return title;
+  if (p.kind === "break") return breakTitle(p.subject ?? "", givesUpAll(p) ? "none" : "amount");
+  return "";
+}
+
+/**
+ * The message that goes with an invite link. The creator chooses to send it, so it can name the habit
+ * (pushes never do). Never leaves empty quotes: with no name, the sentence doesn't need one.
+ */
+export function inviteText(p: Nameable & { emoji?: string | null }) {
+  const emoji = (p.emoji ?? "").trim();
+  const lead = emoji ? `${emoji} ` : "";
+  const tail = "Let's not break the chain.";
+  const subject = inSentence(p.subject ?? "");
+  if (p.kind === "break" && subject) return `${lead}${givesUpAll(p) ? "Give up" : "Cut down on"} ${subject} with me. ${tail}`;
+  const name = pactName(p);
+  return name ? `${lead}Do "${name}" with me. ${tail}` : `${lead}Join my pact. ${tail}`;
+}
+
 type ScheduleBits = {
   cadence: "daily" | "weekly";
   times_per_week: number;
