@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "./toast";
+import { inviteText } from "@/lib/view";
 
 export function inviteUrl(code: string) {
   return `${window.location.origin}/j/${code}`;
@@ -10,14 +11,13 @@ export function inviteUrl(code: string) {
 /** Native share sheet when available (WhatsApp, Messages…), clipboard otherwise. */
 export function ShareInvite({
   code,
-  title,
-  emoji,
+  pact,
   className,
   label = "Invite your partner",
 }: {
   code: string;
-  title: string;
-  emoji: string;
+  /** the pact being shared; inviteText names it right for either kind */
+  pact: Parameters<typeof inviteText>[0];
   className?: string;
   label?: string;
 }) {
@@ -25,7 +25,7 @@ export function ShareInvite({
 
   async function share() {
     const url = inviteUrl(code);
-    const text = `${emoji} Do "${title}" with me. Let's not break the chain.`;
+    const text = inviteText(pact);
     if (navigator.share) {
       try {
         await navigator.share({ title: "Do it.", text, url });
