@@ -293,7 +293,8 @@ export async function undoCheckIn(input: { pactId: string; day: string }): Promi
 
 // ───────────────────────── nudges & freezes ─────────────────────────
 
-export async function nudge(input: { pactId: string; toUser: string; about?: "today" | "yesterday" }): Promise<ActionResult> {
+/** about: "today" (still on for today?), "yesterday" (make it up / answer for it), "start" (just joined, get going) */
+export async function nudge(input: { pactId: string; toUser: string; about?: "today" | "yesterday" | "start" }): Promise<ActionResult> {
   if (!uuid.safeParse(input.pactId).success || !uuid.safeParse(input.toUser).success) return fail("Can't nudge right now");
   const { supabase, userId } = await requireUser();
   if (input.toUser === userId) return fail("You can't nudge yourself");
@@ -312,6 +313,8 @@ export async function nudge(input: { pactId: string; toUser: string; about?: "to
       ? `${pact.emoji} How did yesterday go? Answer before midnight.`
       : input.about === "yesterday"
       ? `${pact.emoji} ${pact.title}. There's still time to make up yesterday.`
+      : input.about === "start"
+      ? `${pact.emoji} ${pact.title}. You're in. Check in today to get going.`
       : `${pact.emoji} ${pact.title}. Still on for today?`;
   after(async () => {
     const name = await displayName(userId);

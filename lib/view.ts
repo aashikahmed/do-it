@@ -87,6 +87,26 @@ export function cadenceText(p: ScheduleBits) {
   return `${freq} for ${weeks} weeks`;
 }
 
+/**
+ * Joined mid-pact: in it and free to check in now, but the chain counts them from the next period
+ * (joining never reopens a period the group already closed; see join_pact in SQL).
+ */
+export function isStarting(b: Pick<PactBundle, "state" | "members">, id: string) {
+  const cur = b.state.current;
+  return b.state.phase === "active" && !!cur && b.members.some((m) => m.user_id === id) && !cur.required.includes(id);
+}
+
+/**
+ * When the chain starts counting someone who just joined: "The chain counts them from tomorrow" (or "from Monday",
+ * the next pact week). Joining in the last period means this round ends first. No full stop, callers add one.
+ */
+export function chainCountsText(b: Pick<PactBundle, "state" | "members" | "today">, id: string, who: "you" | "them") {
+  const joinedOn = b.members.find((m) => m.user_id === id)?.joined_on;
+  if (!joinedOn || joinedOn > b.state.endDate) return `This round ends before the chain counts ${who}`;
+  const when = diffDays(b.today, joinedOn) === 1 ? "tomorrow" : formatDay(joinedOn, { weekday: "long" });
+  return `The chain counts ${who} from ${when}`;
+}
+
 export function streakUnit(b: Pick<PactBundle, "pact">, n: number) {
   const u = b.pact.cadence === "daily" ? "day" : "week";
   return n === 1 ? u : `${u}s`;
@@ -142,9 +162,9 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
   const othersOwing = others.filter((m) => cur.required.includes(m.user_id) && owes(m.user_id));
   const othersDone = others.filter((m) => !owes(m.user_id));
 
-  const iCount = cur.required.includes(me);
-  if (!iCount && iOwe) {
-    return { text: pact.cadence === "daily" ? "You join the chain tomorrow. Check in anyway." : "You join the chain next week. Check in anyway.", tone: "info" };
+  if (isStarting(b, me) && iOwe) {
+    const start = pact.cadence === "daily" ? "Check in today." : "Log your days this week.";
+    return { text: `You're in. ${start} ${chainCountsText(b, me, "you")}.`, tone: "info" };
   }
   if (pact.cadence === "weekly" && iOwe) {
     const left = need - (cur.counts[me] ?? 0);

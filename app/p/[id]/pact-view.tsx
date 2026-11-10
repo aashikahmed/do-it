@@ -22,7 +22,9 @@ import {
   answerOn,
   cadenceText,
   capitalize,
+  chainCountsText,
   firstName,
+  isStarting,
   listNames,
   makeUpLabel,
   othersOwingMakeUp,
@@ -236,16 +238,21 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
           const isMe = m.user_id === me.id;
           const todays = b.checkins.find((c) => c.user_id === m.user_id && c.day === b.today);
           const count = cur?.counts[m.user_id] ?? 0;
-          const required = cur ? cur.required.includes(m.user_id) : true;
+          // joined mid-pact: already in and can check in now, but the chain counts them from the next period
+          const starting = isStarting(b, m.user_id);
           const done = pact.cadence === "daily" ? !!todays : count >= state.need;
           const nudged = b.nudges.some((n) => n.from_user === me.id && n.to_user === m.user_id);
           const isBreak = pact.kind === "break";
           const owesLate = isBreak ? owesYesterdayAnswer(b, m.user_id) : owesMakeUp(b, m.user_id);
+          // break pacts only nudge about yesterday; build pacts nudge anyone who hasn't done their part, new joiners too
+          const canNudge = !isMe && (state.phase === "active" || owesLate) && (isBreak ? owesLate : !done || owesLate);
+          const about = owesLate ? "yesterday" : starting ? "start" : "today";
           let status: string;
           if (state.phase === "upcoming") status = isMe ? "Ready" : `Joined ${formatDay(m.joined_at.slice(0, 10), { day: "numeric", month: "short" })}`;
-          else if (!required) status = pact.cadence === "daily" ? "Joins the chain tomorrow" : "Joins the chain next week";
+          else if (starting && (isBreak ? answerOn(b, m.user_id, b.today) === null : !todays && count === 0)) status = "Just joined";
           else if (isBreak) status = breakStatus(b, m.user_id, todays);
           else if (pact.cadence === "daily") status = todays ? describe(todays, pact) : "Not yet";
+          else if (starting) status = `${count} this week${todays ? ", done today" : ""}`;
           else status = `${count} of ${state.need} this week${todays ? ", done today" : ""}`;
 
           return (
@@ -264,16 +271,22 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
                   {isMe && <span className="font-medium text-ink-3"> (you)</span>}
                 </p>
                 <p className={`truncate text-[15px] ${done ? "font-semibold text-ink" : "text-ink-2"}`}>{status}</p>
+                {starting && (
+                  <p className="text-[14px] font-semibold text-ink-2">
+                    {canNudge ? "Get them going. " : ""}
+                    {chainCountsText(b, m.user_id, isMe ? "you" : "them")}
+                  </p>
+                )}
                 {todays?.note && <p className="mt-0.5 line-clamp-2 text-[15px] text-ink-2">“{todays.note}”</p>}
                 {owesLate && isBreak && <p className="truncate text-[14px] font-semibold text-ink-2">Hasn&apos;t answered for yesterday</p>}
                 {owesLate && !isBreak && state.late && (
                   <p className="truncate text-[14px] font-bold text-[#c4381b]">Still owes {makeUpLabel(pact.cadence, state.late)}</p>
                 )}
               </div>
-              {!isMe && (state.phase === "active" || owesLate) && (isBreak ? owesLate : (required && !done) || owesLate) && (
+              {canNudge && (
                 <div className="flex shrink-0 items-center gap-1.5">
-                  <WhatsAppNudge b={b} me={me} name={firstName(m.name)} yesterday={owesLate} />
-                  <NudgeButton pactId={pact.id} toUser={m.user_id} name={firstName(m.name)} nudged={nudged} yesterday={owesLate} />
+                  <WhatsAppNudge b={b} me={me} toUser={m.user_id} name={firstName(m.name)} about={about} />
+                  <NudgeButton pactId={pact.id} toUser={m.user_id} name={firstName(m.name)} nudged={nudged} about={about} />
                 </div>
               )}
             </li>
@@ -312,19 +325,24 @@ function startValue(b: PactBundle, me: string) {
   return last?.value ?? b.pact.target ?? null;
 }
 
+/** what a nudge is about: today, making up (or answering for) yesterday, or getting someone who just joined going */
+type NudgeAbout = "today" | "yesterday" | "start";
+
 /**
  * Opens WhatsApp with a ready-made nudge; the sender picks the contact there.
  * Works for partners who haven't turned on alerts, and needs no WhatsApp integration.
  */
-function WhatsAppNudge({ b, me, name, yesterday }: { b: PactBundle; me: Me; name: string; yesterday?: boolean }) {
+function WhatsAppNudge({ b, me, toUser, name, about }: { b: PactBundle; me: Me; toUser: string; name: string; about: NudgeAbout }) {
   const iDidIt = b.checkins.some((c) => c.user_id === me.id && c.day === b.today);
   function open() {
     const url = `${window.location.origin}/p/${b.pact.id}`;
     const day = b.state.late ? makeUpLabel(b.pact.cadence, b.state.late) : "yesterday";
     const line = b.pact.kind === "break"
       ? `How did yesterday go, ${name}? You can answer until midnight.`
-      : yesterday
+      : about === "yesterday"
       ? `There's still time to make up ${day}, ${name}. The chain breaks at midnight.`
+      : about === "start"
+      ? `Glad you're in, ${name}. Check in today to get going. ${chainCountsText(b, toUser, "you")}.`
       : iDidIt
         ? `I've done mine today. Your turn, ${name} 👀`
         : `Still on for today, ${name}? Let's not break the chain.`;
@@ -346,7 +364,7 @@ function WhatsAppNudge({ b, me, name, yesterday }: { b: PactBundle; me: Me; name
   );
 }
 
-function NudgeButton({ pactId, toUser, name, nudged, yesterday }: { pactId: string; toUser: string; name: string; nudged: boolean; yesterday?: boolean }) {
+function NudgeButton({ pactId, toUser, name, nudged, about }: { pactId: string; toUser: string; name: string; nudged: boolean; about: NudgeAbout }) {
   const [sent, setSent] = useState(nudged);
   const [pending, start] = useTransition();
   return (
@@ -355,7 +373,7 @@ function NudgeButton({ pactId, toUser, name, nudged, yesterday }: { pactId: stri
       disabled={sent || pending}
       onClick={() =>
         start(async () => {
-          const res = await nudge({ pactId, toUser, about: yesterday ? "yesterday" : "today" });
+          const res = await nudge({ pactId, toUser, about });
           if (res.ok) {
             setSent(true);
             navigator.vibrate?.(10);
