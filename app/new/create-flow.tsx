@@ -13,10 +13,8 @@ import { ValueInput } from "@/components/measure-input";
 import { MEASURES, type Direction, type Measure, type Tracking } from "@/lib/measure";
 import { addDays, deviceTimeZone, todayIn } from "@/lib/dates";
 import { freezesFor } from "@/lib/streak";
-import { cadenceText, restDaysText } from "@/lib/view";
+import { breakTitle, cadenceText, inSentence, restDaysText, type BreakMode } from "@/lib/view";
 import type { PactColor } from "@/lib/data";
-
-type BreakMode = "none" | "days" | "amount";
 
 type Draft = {
   kind: "build" | "break" | null;
@@ -91,17 +89,6 @@ const WEEKLY_LENGTHS = [4, 8, 12];
 
 const BUILD_STEPS = ["Kind", "What", "How often", "How long", "Track", "Look"] as const;
 const BREAK_STEPS = ["Kind", "What", "How much", "How long"] as const;
-
-/** "Soda" → "soda" for use mid-sentence, but "TikTok" stays as typed. */
-function inSentence(s: string) {
-  const t = s.trim();
-  return /[A-Z]/.test(t.slice(1)) ? t : t.charAt(0).toLowerCase() + t.slice(1);
-}
-
-/** What a break pact is called: "No soda", "Less coffee". */
-function breakTitle(subject: string, mode: BreakMode) {
-  return `${mode === "none" ? "No" : "Less"} ${inSentence(subject)}`.slice(0, 60);
-}
 
 export function CreateFlow() {
   const router = useRouter();
@@ -254,8 +241,12 @@ export function CreateFlow() {
         <div className="space-y-3">
           <ShareInvite
             code={created.code}
-            title={d.title}
-            emoji={d.emoji}
+            // a break pact's title isn't in the draft: it's made from the subject when the pact is created
+            pact={
+              isBreak
+                ? { kind: "break", title: breakTitle(d.subject, d.mode), subject, emoji: d.emoji, cadence: breakCadence, measure: d.mode === "amount" ? "count" : "none" }
+                : { kind: "build", title: d.title, emoji: d.emoji }
+            }
             label="Send invite link"
             className="h-16 w-full rounded-[22px] bg-white text-[18px] font-extrabold text-ink"
           />
