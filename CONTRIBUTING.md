@@ -49,7 +49,7 @@ npm run build
 - Timestamp it later than the newest file in that folder, even if that date is in the future.
 - Every new table needs RLS enabled and explicit grants, even if only the service role uses it. Grant the smallest set of columns that works.
 - Use `supabase db reset` to check that your migration applies cleanly from scratch.
-- Say in your pull request that it includes a migration. Only the owner applies migrations to production.
+- Say in your pull request that it includes a migration. Only the owner applies migrations to production, before merging, because merging to `main` deploys straight away. Write migrations that the code already live can run against: add things first, remove them later.
 
 ## Using AI tools
 
