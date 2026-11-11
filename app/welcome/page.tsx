@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { getMe, requireUser } from "@/lib/data";
+import { safeNext } from "@/lib/safe-next";
 import { WelcomeForm } from "./welcome-form";
 
 export const metadata = { title: "Welcome" };
@@ -17,8 +18,8 @@ export default function Page({ searchParams }: PageProps<"/welcome">) {
 
 async function Welcome({ searchParams }: { searchParams: PageProps<"/welcome">["searchParams"] }) {
   const sp = await searchParams;
-  const raw = typeof sp.next === "string" ? sp.next : "/";
-  const next = raw.startsWith("/") && !raw.startsWith("//") && !raw.startsWith("/welcome") ? raw : "/";
+  const target = safeNext(typeof sp.next === "string" ? sp.next : null);
+  const next = target.startsWith("/welcome") ? "/" : target;
   const { supabase, userId } = await requireUser();
   const me = await getMe(supabase, userId);
   if (me.name) redirect(next);

@@ -3,14 +3,11 @@
 import { useRouter } from "next/navigation";
 import { use, useCallback, useEffect, useRef, useState } from "react";
 import { getBrowserClient } from "@/lib/supabase/client";
+import { safeNext } from "@/lib/safe-next";
 import { EmailCodeForm } from "./sign-in-form";
 
 const KEY = "doit.handoff";
 type Pending = { nonce: string; next: string; at: number };
-
-function safeNext(n: string) {
-  return n.startsWith("/") && !n.startsWith("//") ? n : "/";
-}
 
 function readPending(): Pending | null {
   try {
@@ -129,7 +126,7 @@ export function SignIn({ paramsPromise }: { paramsPromise: Promise<{ next: strin
         <h1 className="display text-[60px] font-extrabold">{waiting ? "Finishing sign-in…" : "Let's get you in."}</h1>
         <p className="mt-4 max-w-[32ch] text-[17px] leading-snug text-ink-2">
           {waiting
-            ? "Finish with Google, then come back here. This screen picks it up on its own."
+            ? "Finish with Google and tap Yes, that was me. Then come back here. This screen picks it up on its own."
             : "Your partners see your name and your check-ins. Nothing else."}
         </p>
         {error && <p className="mt-4 text-[15px] font-semibold text-ember">{error}</p>}
