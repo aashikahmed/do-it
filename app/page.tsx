@@ -8,6 +8,7 @@ import { Avatar } from "@/components/avatar";
 import { PactCard } from "@/components/pact-card";
 import { PushCard } from "@/components/push";
 import { Live } from "@/components/live";
+import { TimeZoneSync } from "@/components/time-zone";
 import { LandingChain } from "@/components/landing-chain";
 import { redirect } from "next/navigation";
 
@@ -72,6 +73,7 @@ async function Home() {
   return (
     <main className="min-h-dvh px-4 pt-safe pb-4">
       <Live pactIds={bundles.map((b) => b.pact.id)} days={bundles.map((b) => ({ tz: b.pact.timezone, today: b.today }))} />
+      <TimeZoneSync saved={me.timezone} />
       <header className="flex items-center justify-between px-1 pt-3 pb-5">
         <div>
           <p className="text-[15px] font-semibold text-ink-2">

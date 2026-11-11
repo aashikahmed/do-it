@@ -58,6 +58,8 @@ export interface Member {
   left_on: Day | null;
   name: string;
   avatar_url: string | null;
+  /** their profile's timezone: their reminders and deadlines are worded on it */
+  timezone?: string | null;
 }
 
 export interface Checkin {
@@ -134,7 +136,7 @@ async function loadBundles(supabase: SupabaseClient, pactIds?: string | string[]
   const scope = (q: any, col: string) => (pactIds === undefined ? q : typeof pactIds === "string" ? q.eq(col, pactIds) : q.in(col, pactIds));
   const [pacts, members, checkins, freezes, nudges, misses] = await Promise.all([
     scope(supabase.from("pacts").select("*"), "id"),
-    scope(supabase.from("pact_members").select("pact_id,user_id,joined_on,joined_at,left_on,profile:profiles(display_name,avatar_url)"), "pact_id"),
+    scope(supabase.from("pact_members").select("pact_id,user_id,joined_on,joined_at,left_on,profile:profiles(display_name,avatar_url,timezone)"), "pact_id"),
     fetchAll<Checkin>(() =>
       scope(supabase.from("checkins").select("id,pact_id,user_id,day,value,note,feel,made_up,created_at"), "pact_id")
         // newest day first (a late "log yesterday" must not count as the latest), then entry time
@@ -160,6 +162,7 @@ async function loadBundles(supabase: SupabaseClient, pactIds?: string | string[]
         left_on: (m.left_on as Day | null) ?? null,
         name: ((m.profile as { display_name?: string } | null)?.display_name || "Someone").trim(),
         avatar_url: (m.profile as { avatar_url?: string | null } | null)?.avatar_url ?? null,
+        timezone: (m.profile as { timezone?: string | null } | null)?.timezone ?? null,
       }))
       .sort((a, b) => a.joined_at.localeCompare(b.joined_at));
     const cs = ((checkins.data ?? []) as Checkin[]).filter((c) => c.pact_id === pact.id).map((c) => ({ ...c, value: c.value === null ? null : Number(c.value) }));
