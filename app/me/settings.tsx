@@ -119,7 +119,7 @@ export function Settings({ me, email, googlePhoto }: { me: Me; email: string; go
           </button>
         )}
         <p className="mt-3 text-[14px] leading-snug text-ink-3">
-          You&apos;ll hear when a partner checks in or nudges you, and at 8pm if the chain is at risk.
+          You&apos;ll hear when a partner checks in or nudges you, and in your evening if the chain is at risk.
         </p>
       </section>
 

@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 import { getPact } from "@/lib/data";
+import { TimeZoneSync } from "@/components/time-zone";
 import { PactView } from "./pact-view";
 
 export default function Page({ params }: PageProps<"/p/[id]">) {
@@ -16,7 +17,12 @@ async function PactScreen({ params }: { params: PageProps<"/p/[id]">["params"] }
   const { me, bundle, series } = await getPact(id);
   if (!me.name) redirect(`/welcome?next=/p/${id}`);
   if (!bundle) notFound();
-  return <PactView key={bundle.pact.id} b={bundle} me={me} series={series} />;
+  return (
+    <>
+      <TimeZoneSync saved={me.timezone} />
+      <PactView key={bundle.pact.id} b={bundle} me={me} series={series} />
+    </>
+  );
 }
 
 function PactSkeleton() {

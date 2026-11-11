@@ -9,6 +9,7 @@ import { sendPush } from "@/lib/push";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { addDays, isValidTimeZone, todayIn } from "@/lib/dates";
 import { firstName, makeUpLabel } from "@/lib/view";
+import { deadlineText, pactDeadline, tzFor } from "@/lib/reminders";
 
 export type ActionResult<T = undefined> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -68,6 +69,21 @@ export async function saveProfile(input: { name: string; timezone: string }): Pr
   const { error } = await supabase.from("profiles").update({ display_name: parsed.data.name, timezone: tz }).eq("id", userId);
   if (error) return fail(friendly(error.message));
   refresh();
+  return { ok: true };
+}
+
+/**
+ * Keeps reminders on the person's own clock: the app calls this when the device's timezone no longer matches the
+ * profile (travel, a new phone). Only ever touches `timezone`, and only writes when it changed.
+ */
+export async function syncTimeZone(timezone: string): Promise<ActionResult> {
+  const parsed = z.string().min(1).max(64).safeParse(timezone);
+  if (!parsed.success || !isValidTimeZone(parsed.data)) return fail("Unknown timezone");
+  const { supabase, userId } = await requireUser();
+  const { data, error } = await supabase.from("profiles").update({ timezone: parsed.data }).eq("id", userId).neq("timezone", parsed.data).select("id");
+  if (error) return fail(friendly(error.message));
+  // the home screen's date follows it too
+  if (data?.length) refresh();
   return { ok: true };
 }
 
@@ -308,19 +324,24 @@ export async function nudge(input: { pactId: string; toUser: string; about?: "to
     if (error.message.includes("duplicate key")) return fail("Already nudged today");
     return fail(friendly(error.message));
   }
-  const body =
+  const body = (until: string) =>
     pact.kind === "break"
-      ? `${pact.emoji} How did yesterday go? Answer before midnight.`
+      ? `${pact.emoji} How did yesterday go? Answer before ${until}.`
       : input.about === "yesterday"
       ? `${pact.emoji} ${pact.title}. There's still time to make up yesterday.`
       : input.about === "start"
       ? `${pact.emoji} ${pact.title}. You're in. Check in today to get going.`
       : `${pact.emoji} ${pact.title}. Still on for today?`;
   after(async () => {
-    const name = await displayName(userId);
+    const [name, { data: them }] = await Promise.all([
+      displayName(userId),
+      createAdminClient().from("profiles").select("timezone").eq("id", input.toUser).maybeSingle(),
+    ]);
+    // the answer window closes at the pact's midnight, worded on their clock
+    const until = deadlineText(pactDeadline(pact.timezone, today), tzFor(them?.timezone, pact.timezone));
     await sendPush([input.toUser], {
       title: `👋 ${name} nudged you`,
-      body,
+      body: body(until),
       url: `/p/${pact.id}`,
       tag: `nudge-${pact.id}`,
     });
