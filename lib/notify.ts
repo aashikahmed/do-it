@@ -6,6 +6,7 @@ import { sendPush } from "./push";
 import { fetchAll, type Pact } from "./data";
 import { formatValue } from "./measure";
 import { makeUpLabel } from "./view";
+import { byDeadline, pactDeadline, tzFor } from "./reminders";
 
 type MemberRow = { user_id: string; joined_on: string; left_on: string | null; profile?: unknown };
 
@@ -22,7 +23,7 @@ export async function notifyCheckin(pactId: string, actorId: string, day: string
 
   const [{ data: pact }, { data: members }, { data: checkins }, { data: freezes }, { data: misses }] = await Promise.all([
     admin.from("pacts").select("*").eq("id", pactId).single<Pact>(),
-    admin.from("pact_members").select("user_id,joined_on,left_on,profile:profiles(display_name)").eq("pact_id", pactId),
+    admin.from("pact_members").select("user_id,joined_on,left_on,profile:profiles(display_name,timezone)").eq("pact_id", pactId),
     fetchAll<{ user_id: string; day: string; value: number | null; made_up: boolean }>(() =>
       admin.from("checkins").select("user_id,day,value,made_up").eq("pact_id", pactId).order("day").order("user_id"),
     ),
@@ -65,12 +66,19 @@ export async function notifyCheckin(pactId: string, actorId: string, day: string
         tag: `pact-${pactId}`,
       });
     } else if (p.status === "late") {
-      await sendPush(p.owing.filter((u) => others.includes(u)), {
-        title: `${pact.emoji} ${actorName} ${what} ${label}${did}`,
-        body: `${pact.title}. Your turn to make it up, before midnight.`,
-        url,
-        tag: `pact-${pactId}`,
-      });
+      // the make-up closes at the pact's midnight, worded on each person's clock
+      const tzOf = (u: string) => tzFor(profileOf(all, u)?.timezone, pact.timezone);
+      const groups = byDeadline(p.owing.filter((u) => others.includes(u)), tzOf, pactDeadline(pact.timezone, today));
+      await Promise.all(
+        groups.map(([until, group]) =>
+          sendPush(group, {
+            title: `${pact.emoji} ${actorName} ${what} ${label}${did}`,
+            body: `${pact.title}. Your turn to make it up, before ${until}.`,
+            url,
+            tag: `pact-${pactId}`,
+          }),
+        ),
+      );
     }
     return;
   }
@@ -100,9 +108,13 @@ export async function notifyCheckin(pactId: string, actorId: string, day: string
   ]);
 }
 
+type Profile = { display_name?: string; timezone?: string | null };
+
+function profileOf(members: { user_id: string; profile?: unknown }[], id: string) {
+  const p = members.find((x) => x.user_id === id)?.profile as Profile | Profile[] | null | undefined;
+  return Array.isArray(p) ? p[0] : p;
+}
+
 export function nameOf(members: { user_id: string; profile?: unknown }[], id: string) {
-  const m = members.find((x) => x.user_id === id);
-  const p = m?.profile as { display_name?: string } | { display_name?: string }[] | null | undefined;
-  const n = Array.isArray(p) ? p[0]?.display_name : p?.display_name;
-  return (n || "Your partner").trim();
+  return (profileOf(members, id)?.display_name || "Your partner").trim();
 }

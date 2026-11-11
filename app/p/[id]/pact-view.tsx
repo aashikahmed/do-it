@@ -35,6 +35,8 @@ import {
   subjectOf,
 } from "@/lib/view";
 import { limitOn, type Period } from "@/lib/streak";
+import { deadlineText, pactDeadline, tzFor } from "@/lib/reminders";
+import { useViewerTimeZone } from "@/components/time-zone";
 import { FEELS, formatAvg, formatValue, isBetter, progressStats, targetText, type Feel, type Tracking } from "@/lib/measure";
 import { keptCount, type Series } from "@/lib/rounds";
 import { logAvatarTap } from "@/lib/track";
@@ -337,10 +339,13 @@ function WhatsAppNudge({ b, me, toUser, name, about }: { b: PactBundle; me: Me; 
   function open() {
     const url = `${window.location.origin}/p/${b.pact.id}`;
     const day = b.state.late ? makeUpLabel(b.pact.cadence, b.state.late) : "yesterday";
+    // they read it, so the deadline goes on their clock
+    const them = b.allMembers.find((m) => m.user_id === toUser)?.timezone;
+    const until = deadlineText(pactDeadline(b.pact.timezone, b.today), tzFor(them, b.pact.timezone));
     const line = b.pact.kind === "break"
-      ? `How did yesterday go, ${name}? You can answer until midnight.`
+      ? `How did yesterday go, ${name}? You can answer until ${until}.`
       : about === "yesterday"
-      ? `There's still time to make up ${day}, ${name}. The chain breaks at midnight.`
+      ? `There's still time to make up ${day}, ${name}. The chain breaks at ${until}.`
       : about === "start"
       ? `Glad you're in, ${name}. Check in today to get going. ${chainCountsText(b, toUser, "you")}.`
       : iDidIt
@@ -601,6 +606,16 @@ function EditSheet({ b, c, open, onClose }: { b: PactBundle; c: Checkin; open: b
 
 type Celebrate = (x: { title: string; subtitle?: string }) => void;
 
+/**
+ * When today's pact day ends, and yesterday's make-up with it, on the viewer's clock: "midnight", or "4pm your time"
+ * when they're somewhere else. Goes after "until", "before" or "at".
+ */
+function useUntil(b: PactBundle, me: string) {
+  const saved = b.allMembers.find((m) => m.user_id === me)?.timezone;
+  const tz = useViewerTimeZone(tzFor(saved, b.pact.timezone));
+  return deadlineText(pactDeadline(b.pact.timezone, b.today), tzFor(tz, b.pact.timezone));
+}
+
 /** Log yesterday: either you did it and forgot to log, or you're doing it today to make up. Both count. */
 function MakeUpSheet({ b, me, open, onClose, onCelebrate }: { b: PactBundle; me: string; open: boolean; onClose: () => void; onCelebrate: Celebrate }) {
   const { pact, state } = b;
@@ -610,6 +625,7 @@ function MakeUpSheet({ b, me, open, onClose, onCelebrate }: { b: PactBundle; me:
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const router = useRouter();
+  const until = useUntil(b, me);
   const day = formatDay(b.yesterday, { weekday: "long" });
   const others = b.members.filter((m) => m.user_id !== me).map((m) => firstName(m.name));
 
@@ -646,7 +662,7 @@ function MakeUpSheet({ b, me, open, onClose, onCelebrate }: { b: PactBundle; me:
   return (
     <Sheet open={open} onClose={onClose} title={`Make up ${day}`}>
       <p className="mb-4 text-[16px] text-ink-2">
-        It counts for {day} either way{others.length ? `. ${listNames(others)} will see which one you picked` : ""}. You have until midnight.
+        It counts for {day} either way{others.length ? `. ${listNames(others)} will see which one you picked` : ""}. You have until {until}.
       </p>
       <div role="radiogroup" aria-label="What happened" className="mb-4 space-y-2">
         {options.map((o) => (
@@ -685,6 +701,7 @@ function MakeUpCard({ b, me, onCelebrate }: { b: PactBundle; me: string; onCeleb
   const [sheet, setSheet] = useState<"make" | "miss" | null>(null);
   const [busy, setBusy] = useState(false);
   const router = useRouter();
+  const until = useUntil(b, me);
 
   // older misses in the same run: only a freeze saves those, and it has to happen before the make-up
   const older = state.repair ? state.repair.periods.filter((p) => p !== late.start) : [];
@@ -709,9 +726,9 @@ function MakeUpCard({ b, me, onCelebrate }: { b: PactBundle; me: string; onCeleb
       <p className="mt-1.5 text-[15px] leading-snug text-ink-2">
         {iOwe
           ? pact.cadence === "daily"
-            ? `You have until midnight to make it up. ${breaks}`
-            : `One more check-in, logged for yesterday, closes it. You have until midnight.`
-          : `${others.length === 1 ? `${others[0]} has` : "They have"} until midnight to make it up. A nudge might help.`}
+            ? `You have until ${until} to make it up. ${breaks}`
+            : `One more check-in, logged for yesterday, closes it. You have until ${until}.`
+          : `${others.length === 1 ? `${others[0]} has` : "They have"} until ${until} to make it up. A nudge might help.`}
       </p>
       {older.length > 0 && (
         <div className="mt-3 rounded-2xl bg-white/70 p-3">
@@ -1036,6 +1053,7 @@ function YesterdayCard({ b, me, onCelebrate }: { b: PactBundle; me: string; onCe
   const [busy, setBusy] = useState(false);
   const [sheet, setSheet] = useState<"gave-in" | "over" | null>(null);
   const router = useRouter();
+  const until = useUntil(b, me);
 
   // older misses in the same run can only be saved by a freeze, before yesterday closes
   const late = state.late;
@@ -1072,7 +1090,7 @@ function YesterdayCard({ b, me, onCelebrate }: { b: PactBundle; me: string; onCe
     return (
       <section className="rounded-[24px] bg-paper p-5">
         <p className="text-[18px] leading-tight font-extrabold">Waiting on {listNames(others)} to answer for {day}</p>
-        <p className="mt-1.5 text-[15px] leading-snug text-ink-2">They have until midnight. A nudge might help.</p>
+        <p className="mt-1.5 text-[15px] leading-snug text-ink-2">They have until {until}. A nudge might help.</p>
       </section>
     );
   }
@@ -1081,7 +1099,7 @@ function YesterdayCard({ b, me, onCelebrate }: { b: PactBundle; me: string; onCe
     <motion.section initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="rounded-[24px] bg-[var(--pact-soft)] p-5 text-ink">
       <p className="text-[20px] leading-tight font-extrabold">How did {day} go?</p>
       <p className="mt-1.5 text-[15px] leading-snug text-ink-2">
-        {amount ? `How many ${pact.unit} did you have? Your limit was ${formatValue(pact, limit ?? 0)}.` : `Did you stay off ${what}?`} You can answer until midnight.
+        {amount ? `How many ${pact.unit} did you have? Your limit was ${formatValue(pact, limit ?? 0)}.` : `Did you stay off ${what}?`} You can answer until {until}.
       </p>
       {older.length > 0 && (
         <div className="mt-3 rounded-2xl bg-white/70 p-3">
