@@ -4,10 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useRef, useState } from "react";
 import { getBrowserClient } from "@/lib/supabase/client";
-
-function safeNext(n: string) {
-  return n.startsWith("/") && !n.startsWith("//") ? n : "/";
-}
+import { safeNext } from "@/lib/safe-next";
 
 export function EmailCodeForm({ nextPromise }: { nextPromise: Promise<string> }) {
   const next = safeNext(use(nextPromise));
