@@ -130,8 +130,8 @@ export async function fetchAll<T>(build: () => any): Promise<{ data: T[]; error:
   }
 }
 
-/** Load pacts plus everything needed to render them in one parallel round-trip (RLS scopes to the caller's pacts). */
-async function loadBundles(supabase: SupabaseClient, pactIds?: string | string[]) {
+/** Load pacts plus everything needed to render them in one parallel round-trip (RLS scopes to the caller's pacts; the admin pages pass the service-role client to load every pact). */
+export async function loadBundles(supabase: SupabaseClient, pactIds?: string | string[]) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrows any query builder to the given pacts
   const scope = (q: any, col: string) => (pactIds === undefined ? q : typeof pactIds === "string" ? q.eq(col, pactIds) : q.in(col, pactIds));
   const [pacts, members, checkins, freezes, nudges, misses] = await Promise.all([

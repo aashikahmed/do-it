@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isAdminEmail } from "@/lib/admin-access";
 
 const PUBLIC = [/^\/$/, /^\/signin/, /^\/j\//, /^\/api\/cron/, /^\/auth\//, /^\/api\/auth\//];
 
@@ -27,6 +28,17 @@ export async function proxy(request: NextRequest) {
   const { data } = await supabase.auth.getClaims();
   const signedIn = !!data?.claims?.sub;
   const path = request.nextUrl.pathname;
+
+  // The admin pages don't exist for anyone else, signed in or not: a plain 404, no sign-in redirect.
+  // The pages check again themselves (lib/admin.ts); this just keeps /admin from showing up at all.
+  if (/^\/admin(\/|$)/.test(path) && !isAdminEmail(data?.claims?.email)) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/_not-found";
+    url.search = "";
+    const notFound = NextResponse.rewrite(url, { status: 404 });
+    response.cookies.getAll().forEach((c) => notFound.cookies.set(c));
+    return notFound;
+  }
 
   if (!signedIn && !PUBLIC.some((r) => r.test(path))) {
     const url = request.nextUrl.clone();

@@ -37,6 +37,47 @@ export async function GET(req: NextRequest) {
 
   const admin = createAdminClient();
   const now = new Date();
+  // every push this run, by kind, for the admin Health page (cron_runs)
+  const tally: Record<PushKind, number> = { evening: 0, makeup: 0, finished: 0, break_morning: 0 };
+  let failed = 0;
+  const pushAs =
+    (kind: PushKind): typeof sendPush =>
+    async (ids, payload) => {
+      const res = await sendPush(ids, payload);
+      tally[kind] += res.sent;
+      failed += res.failed;
+      return res;
+    };
+
+  let checked = 0;
+  let error: string | null = null;
+  try {
+    checked = await remind(admin, now, pushAs);
+  } catch (err) {
+    error = (err as Error).message || "unknown error";
+    console.error("reminders failed", error);
+  }
+  const sent = Object.values(tally).reduce((a, b) => a + b, 0);
+  const { error: logError } = await admin.from("cron_runs").insert({
+    job: "reminders",
+    started_at: now.toISOString(),
+    checked,
+    sent: tally,
+    failed,
+    error: error?.slice(0, 1000) ?? null,
+  });
+  if (logError) console.error("cron_runs insert failed", logError.message);
+  // housekeeping: keep 90 days of runs
+  await admin.from("cron_runs").delete().lt("started_at", new Date(now.getTime() - 90 * 86_400_000).toISOString());
+
+  if (error) return NextResponse.json({ error }, { status: 500 });
+  return NextResponse.json({ checked, sent });
+}
+
+type PushKind = "evening" | "makeup" | "finished" | "break_morning";
+
+/** One reminder pass. Returns how many pacts it looked at; pushes are counted through `pushAs`. */
+async function remind(admin: ReturnType<typeof createAdminClient>, now: Date, pushAs: (kind: PushKind) => typeof sendPush): Promise<number> {
   const utcToday = todayIn("UTC", now);
   const { data: pacts, error } = await fetchAll<Pact>(() =>
     admin
@@ -46,7 +87,7 @@ export async function GET(req: NextRequest) {
       .gte("created_at", new Date(now.getTime() - 400 * 86_400_000).toISOString())
       .order("id"),
   );
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) throw new Error(error.message);
 
   const all = (pacts ?? []) as Pact[];
   // day one through the day after the last (a make-up for the last day). Who's due is decided per person below.
@@ -60,7 +101,7 @@ export async function GET(req: NextRequest) {
     // skip if someone already tapped Go again: they got the new-round push instead
     return since >= 1 && since <= 2 && !all.some((x) => x.previous_id === p.id);
   });
-  if (!due.length && !finished.length) return NextResponse.json({ checked: 0, sent: 0 });
+  if (!due.length && !finished.length) return 0;
 
   const ids = [...new Set([...due, ...finished].map((p) => p.id))];
   const [{ data: members }, { data: checkins }, { data: freezes }, { data: misses }] = await Promise.all([
@@ -89,7 +130,6 @@ export async function GET(req: NextRequest) {
     return { ms, cs, xs, state, tzOf };
   };
 
-  let sent = 0;
   for (const pact of due) {
     const today = todayIn(pact.timezone, now);
     const { ms, cs, xs, state, tzOf } = load(pact);
@@ -102,7 +142,7 @@ export async function GET(req: NextRequest) {
 
     if (pact.kind === "break") {
       const mornings = ms.filter((m) => !m.left_on && morningDue(now, closedAt, tzOf(m.user_id), deadline)).map((m) => m.user_id);
-      if (mornings.length) sent += await breakMorning(admin, pact, ms, cs, xs, state, today, new Set(mornings), tzOf, deadline, now);
+      if (mornings.length) await breakMorning(admin, pushAs("break_morning"), pact, ms, cs, xs, state, today, new Set(mornings), tzOf, deadline, now);
       continue;
     }
     const late = state.late;
@@ -143,8 +183,7 @@ export async function GET(req: NextRequest) {
         // "today" only when the window closes before their own midnight
         const when = until.includes("tomorrow") ? "" : " today";
         const how = pact.cadence === "daily" ? `Make it up${when} ${keep}.` : `One more check-in, logged for yesterday, closes it. Do it${when} ${keep}.`;
-        const res = await sendPush(group, { title: `${pact.emoji} ${capitalize(label)} is still open`, body: `${how} You have until ${until}.`, url, tag });
-        sent += res.sent;
+        await pushAs("makeup")(group, { title: `${pact.emoji} ${capitalize(label)} is still open`, body: `${how} You have until ${until}.`, url, tag });
       }
     }
     if (!evening.length) continue;
@@ -172,16 +211,17 @@ export async function GET(req: NextRequest) {
       .filter((m) => !m.left_on && !atRisk.has(m.user_id) && cs.some((c) => c.user_id === m.user_id && c.day === today))
       .map((m) => (((m.profile as Profile)?.display_name ?? "").split(" ")[0] || "Your partner"));
     for (const [until, group] of byDeadline(targets, tzOf, deadline, now)) {
-      const results = await Promise.all([
-        sendPush(
+      const sendEvening = pushAs("evening");
+      await Promise.all([
+        sendEvening(
           group.filter((u) => owesLate.has(u) && atRisk.has(u)),
           { title: `${pact.emoji} Two to do before ${until}`, body: `Make up ${label}, then today. ${streakBit}`, url, tag },
         ),
-        sendPush(
+        sendEvening(
           group.filter((u) => owesLate.has(u) && !atRisk.has(u)),
           { title: `${pact.emoji} Last chance to make up ${label}`, body: `The chain breaks at ${until}. ${streakBit}`, url, tag },
         ),
-        sendPush(
+        sendEvening(
           group.filter((u) => !owesLate.has(u)),
           {
             title: `${pact.emoji} ${pact.title} is waiting on you`,
@@ -191,7 +231,6 @@ export async function GET(req: NextRequest) {
           },
         ),
       ]);
-      sent += results.reduce((n, r) => n + r.sent, 0);
     }
   }
 
@@ -217,16 +256,15 @@ export async function GET(req: NextRequest) {
     const kept = keptCount(state);
     const unit = pact.cadence === "daily" ? "days" : "weeks";
     const who = active.length > 1 ? "Together you kept" : "You kept";
-    const res = await sendPush(targets, {
+    await pushAs("finished")(targets, {
       title: pact.kind === "break" ? `${pact.emoji} ${state.periods.length} ${unit}, done` : `${pact.emoji} ${state.periods.length} ${unit} of ${pact.title}, done`,
       body: `${who} ${kept} of ${state.periods.length}. Go again?`,
       url: `/p/${pact.id}`,
       tag: `pact-${pact.id}`,
     });
-    sent += res.sent;
   }
 
-  return NextResponse.json({ checked: due.length + finished.length, sent });
+  return due.length + finished.length;
 }
 
 /**
@@ -236,6 +274,7 @@ export async function GET(req: NextRequest) {
  */
 async function breakMorning(
   admin: ReturnType<typeof createAdminClient>,
+  push: typeof sendPush,
   pact: Pact,
   ms: M[],
   cs: C[],
@@ -292,15 +331,15 @@ async function breakMorning(
   const streak = state.streak > 0 ? `Your ${state.streak}-${unit} streak is one tap from growing. ` : "";
   const results = await Promise.all([
     ...byDeadline(ask.filter((u) => targets.has(u)), tzOf, deadline, now).map(([until, group]) =>
-      sendPush(group, { title: `${pact.emoji} How did yesterday go?`, body: `${streak}You have until ${until} to answer.`, url, tag }),
+      push(group, { title: `${pact.emoji} How did yesterday go?`, body: `${streak}You have until ${until} to answer.`, url, tag }),
     ),
-    sendPush(good.filter((u) => targets.has(u)), {
+    push(good.filter((u) => targets.has(u)), {
       title: `${pact.emoji} You all made it through`,
       body: `${state.streak}-${unit} streak. Keep it going.`,
       url,
       tag,
     }),
-    bad ? sendPush(bad.to.filter((u) => targets.has(u)), { title: bad.title, body: bad.body, url, tag }) : Promise.resolve({ sent: 0 }),
+    bad ? push(bad.to.filter((u) => targets.has(u)), { title: bad.title, body: bad.body, url, tag }) : Promise.resolve({ sent: 0, failed: 0 }),
   ]);
   return results.reduce((n, r) => n + r.sent, 0);
 }

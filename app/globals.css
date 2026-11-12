@@ -93,6 +93,12 @@ body {
   }
 }
 
+/* The admin pages (app/admin) use the full width: tables don't fit a phone column. */
+.app-column:has(.admin-root) {
+  max-width: none;
+  box-shadow: none;
+}
+
 button,
 a,
 [role="button"] {

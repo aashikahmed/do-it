@@ -53,7 +53,8 @@ Maintainer notes. Contributors don't need any of this.
 
 - App: https://doit.launchit.ae (Vercel project `do-it`, functions pinned to `fra1`), fallback https://do-it-omega-puce.vercel.app
 - Supabase project `do-it` (`ubdkikowagrmghxsgssi`, eu-central-1). DB password in `.env.production.local` (gitignored).
-- Hourly reminder cron is in `vercel.json` (Vercel sends `CRON_SECRET` automatically).
+- Hourly reminder cron is in `vercel.json` (Vercel sends `CRON_SECRET` automatically). Each run writes a row to `cron_runs` (pushes by kind, failures, errors), shown on the admin Health page.
+- Admin: `/admin` (overview, people, pacts, activity, health), view-only plus a test push to yourself. Only the emails in the `ADMIN_EMAILS` env var (Vercel) can open it; everyone else, signed in or not, gets a 404.
 - Deploy: every push or merge to `main` deploys to production through Vercel's Git integration, and other branches get preview deployments (which have no env vars, so they don't work). `vercel deploy --prod` also works.
 - Schema: `supabase db push` (with `SUPABASE_DB_PASSWORD` from `.env.production.local`). Apply a pull request's migration *before* merging it, because the merge goes live straight away. Keep migrations backward compatible with the code that's already live.
 - **Auth config is managed in the dashboard** (site URL `https://doit.launchit.ae`, redirect allowlist, Google provider). Don't run `supabase config push` from this repo's config.toml: it targets local dev and would switch the Google provider off.
@@ -71,6 +72,7 @@ app/actions.ts         server actions: create/join/check-in/nudge/freeze/push
 app/p/[id]/            pact screen (chain, roster, hold-to-check-in, freeze, recap)
 app/new/               4-step create flow + invite
 app/j/[code]/          invite landing (works signed out)
+app/admin/             owner-only admin pages (ADMIN_EMAILS); data in lib/admin.ts
 app/api/cron/reminders morning make-up reminder, evening at-risk reminder, "you finished" push
 public/sw.js           push + notification click handling
 ```

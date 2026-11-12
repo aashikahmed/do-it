@@ -21,14 +21,16 @@ function configure() {
   return true;
 }
 
-export async function sendPush(userIds: string[], payload: PushPayload) {
-  if (!userIds.length || !configure()) return { sent: 0 };
+/** sent: delivered to a push service · failed: rejected for another reason (dead subscriptions are pruned, not counted) */
+export async function sendPush(userIds: string[], payload: PushPayload): Promise<{ sent: number; failed: number }> {
+  if (!userIds.length || !configure()) return { sent: 0, failed: 0 };
   const admin = createAdminClient();
   const { data: subs } = await admin.from("push_subscriptions").select("endpoint,p256dh,auth,user_id").in("user_id", userIds);
-  if (!subs?.length) return { sent: 0 };
+  if (!subs?.length) return { sent: 0, failed: 0 };
 
   const dead: string[] = [];
   let sent = 0;
+  let failed = 0;
   await Promise.all(
     subs.map(async (s) => {
       try {
@@ -41,10 +43,13 @@ export async function sendPush(userIds: string[], payload: PushPayload) {
       } catch (err) {
         const code = (err as { statusCode?: number }).statusCode;
         if (code === 404 || code === 410) dead.push(s.endpoint);
-        else console.error("push failed", code, (err as Error).message);
+        else {
+          failed++;
+          console.error("push failed", code, (err as Error).message);
+        }
       }
     }),
   );
   if (dead.length) await admin.from("push_subscriptions").delete().in("endpoint", dead);
-  return { sent };
+  return { sent, failed };
 }

@@ -18,3 +18,4 @@
 - Auth = Google OAuth + iOS handoff (`app/auth/callback`, `app/auth/handoff` confirm step, `app/api/auth/handoff`, `auth_handoffs`). A parked code is only released after "Yes, that was me" in the receiving browser (httpOnly `doit-handoff` cookie). Post-sign-in redirects go through `lib/safe-next.ts`. Email OTP is dev-only.
 - Merging to `main` deploys to prod immediately (Vercel Git). Apply migrations before merging; keep them compatible with the live code.
 - Contributions: see CONTRIBUTING.md and SECURITY.md. Contributors work from forks and never get production access. Keep CI free of real secrets and on `pull_request`, never `pull_request_target`.
+- Admin portal: `/admin`, view-only + test push. Gate = `ADMIN_EMAILS` env (Vercel; never commit an email, the repo is public), checked in `proxy.ts` (404) and again in every `lib/admin.ts` loader / admin server action. Loaders read with the service role, so never export one without `requireAdmin()`.
