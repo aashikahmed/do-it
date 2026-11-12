@@ -36,7 +36,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${brico.variable} antialiased`}>
       <body>
-        <div className="relative mx-auto min-h-dvh w-full max-w-[440px] bg-mist sm:shadow-[0_0_0_1px_#d3d7e8,0_30px_80px_-30px_rgba(16,20,58,0.35)]">
+        <div className="app-column relative mx-auto min-h-dvh w-full max-w-[440px] bg-mist sm:shadow-[0_0_0_1px_#d3d7e8,0_30px_80px_-30px_rgba(16,20,58,0.35)]">
           {children}
         </div>
         <Toaster />
