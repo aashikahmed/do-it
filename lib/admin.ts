@@ -323,7 +323,7 @@ function memberToday(b: PactBundle, m: Member): { text: string; tone: Tone } {
 
 // ---------- activity ----------
 
-export type EventKind = "checkin" | "makeup" | "miss" | "freeze" | "nudge" | "join" | "leave" | "pact" | "round" | "signup";
+export type EventKind = "checkin" | "makeup" | "miss" | "freeze" | "nudge" | "heart" | "join" | "leave" | "pact" | "round" | "signup";
 
 export interface ActivityEvent {
   key: string;
@@ -367,6 +367,11 @@ export async function getActivity() {
       const what = c.made_up ? `made up ${formatDay(c.day)}` : brk ? "stayed off it" : "checked in";
       const value = c.value !== null && x.pact.unit ? ` · ${c.value} ${x.pact.unit}` : "";
       ev.push({ key: `c${c.id}`, kind: c.made_up ? "makeup" : "checkin", at: c.created_at, text: `${who(c.user_id)} ${what}${value}`, pactId: x.pact.id, pact: label(x.pact.id) });
+    }
+    for (const h of x.hearts) {
+      if (h.created_at < since) continue;
+      const to = x.checkins.find((c) => c.id === h.checkin_id)?.user_id ?? null;
+      ev.push({ key: `h${h.checkin_id}${h.from_user}`, kind: "heart", at: h.created_at, text: `${who(h.from_user)} sent ${who(to)} a heart`, pactId: x.pact.id, pact: label(x.pact.id) });
     }
     if (x.pact.created_at >= since) {
       const round = x.pact.round > 1;

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { applyFreeze, askForHelp, callMiss, checkIn, leavePact, nudge, saveCravingPlan, startNextRound, undoCheckIn, updateCheckIn } from "@/lib/client-actions";
 import { Avatar } from "@/components/avatar";
+import { HeartRow } from "@/components/hearts";
 import { Burst } from "@/components/burst";
 import { BottomDock } from "@/components/bottom-dock";
 import { Chain } from "@/components/chain";
@@ -258,40 +259,45 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
           else status = `${count} of ${state.need} this week${todays ? ", done today" : ""}`;
 
           return (
-            <li key={m.user_id} className="flex items-center gap-3 rounded-[18px] px-3 py-3">
-              <Avatar
-                id={m.user_id}
-                name={m.name}
-                src={m.avatar_url}
-                size={44}
-                done={state.phase === "active" && (isBreak ? answerOn(b, m.user_id, b.today) === "yes" : done)}
-                onTap={isMe ? undefined : () => logAvatarTap(pact.id, m.user_id)}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[17px] font-bold">
-                  {m.name}
-                  {isMe && <span className="font-medium text-ink-3"> (you)</span>}
-                </p>
-                <p className={`truncate text-[15px] ${done ? "font-semibold text-ink" : "text-ink-2"}`}>{status}</p>
-                {starting && (
-                  <p className="text-[14px] font-semibold text-ink-2">
-                    {canNudge ? "Get them going. " : ""}
-                    {chainCountsText(b, m.user_id, isMe ? "you" : "them")}
-                  </p>
-                )}
-                {todays?.note && <p className="mt-0.5 line-clamp-2 text-[15px] text-ink-2">“{todays.note}”</p>}
-                {owesLate && isBreak && <p className="truncate text-[14px] font-semibold text-ink-2">Hasn&apos;t answered for yesterday</p>}
-                {owesLate && !isBreak && state.late && (
-                  <p className="truncate text-[14px] font-bold text-[#c4381b]">Still owes {makeUpLabel(pact.cadence, state.late)}</p>
-                )}
-              </div>
-              {canNudge && (
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <WhatsAppNudge b={b} me={me} toUser={m.user_id} name={firstName(m.name)} about={about} />
-                  <NudgeButton pactId={pact.id} toUser={m.user_id} name={firstName(m.name)} nudged={nudged} about={about} />
-                </div>
+            <HeartRow key={m.user_id} b={b} me={me} c={todays} className="flex items-center gap-3 rounded-[18px] px-3 py-3">
+              {(hearts) => (
+                <>
+                  <Avatar
+                    id={m.user_id}
+                    name={m.name}
+                    src={m.avatar_url}
+                    size={44}
+                    done={state.phase === "active" && (isBreak ? answerOn(b, m.user_id, b.today) === "yes" : done)}
+                    onTap={isMe ? undefined : () => logAvatarTap(pact.id, m.user_id)}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[17px] font-bold">
+                      {m.name}
+                      {isMe && <span className="font-medium text-ink-3"> (you)</span>}
+                    </p>
+                    <p className={`truncate text-[15px] ${done ? "font-semibold text-ink" : "text-ink-2"}`}>{status}</p>
+                    {starting && (
+                      <p className="text-[14px] font-semibold text-ink-2">
+                        {canNudge ? "Get them going. " : ""}
+                        {chainCountsText(b, m.user_id, isMe ? "you" : "them")}
+                      </p>
+                    )}
+                    {todays?.note && <p className="mt-0.5 line-clamp-2 text-[15px] text-ink-2">“{todays.note}”</p>}
+                    {hearts}
+                    {owesLate && isBreak && <p className="truncate text-[14px] font-semibold text-ink-2">Hasn&apos;t answered for yesterday</p>}
+                    {owesLate && !isBreak && state.late && (
+                      <p className="truncate text-[14px] font-bold text-[#c4381b]">Still owes {makeUpLabel(pact.cadence, state.late)}</p>
+                    )}
+                  </div>
+                  {canNudge && (
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <WhatsAppNudge b={b} me={me} toUser={m.user_id} name={firstName(m.name)} about={about} />
+                      <NudgeButton pactId={pact.id} toUser={m.user_id} name={firstName(m.name)} nudged={nudged} about={about} />
+                    </div>
+                  )}
+                </>
               )}
-            </li>
+            </HeartRow>
           );
         })}
       </ul>
@@ -1315,26 +1321,31 @@ function Activity({ b, me }: { b: PactBundle; me: Me }) {
       <h2 className="px-3 pt-3 pb-1 text-[17px] font-extrabold">Activity</h2>
       <ul>
         {items.map((c) => (
-          <li key={c.id} className="flex gap-3 px-3 py-3">
-            <Avatar
-              id={c.user_id}
-              name={name(c.user_id)}
-              src={b.allMembers.find((m) => m.user_id === c.user_id)?.avatar_url}
-              size={34}
-              onTap={c.user_id === me.id ? undefined : () => logAvatarTap(b.pact.id, c.user_id)}
-            />
-            <div className="min-w-0 flex-1">
-              <p className="text-[15px]">
-                <b>{firstName(name(c.user_id))}</b>{" "}
-                <span className="text-ink-2">
-                  {activityLine(c, b)}
-                  {c.feel ? `, felt ${FEELS[c.feel - 1].label.toLowerCase()}` : ""}
-                </span>
-              </p>
-              {c.note && <p className="mt-0.5 text-[15px] leading-snug break-words">{c.note}</p>}
-            </div>
-            <span className="shrink-0 pt-0.5 text-[13px] font-medium text-ink-3">{when(c.day)}</span>
-          </li>
+          <HeartRow key={c.id} b={b} me={me} c={c} className="flex gap-3 px-3 py-3">
+            {(hearts) => (
+              <>
+                <Avatar
+                  id={c.user_id}
+                  name={name(c.user_id)}
+                  src={b.allMembers.find((m) => m.user_id === c.user_id)?.avatar_url}
+                  size={34}
+                  onTap={c.user_id === me.id ? undefined : () => logAvatarTap(b.pact.id, c.user_id)}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[15px]">
+                    <b>{firstName(name(c.user_id))}</b>{" "}
+                    <span className="text-ink-2">
+                      {activityLine(c, b)}
+                      {c.feel ? `, felt ${FEELS[c.feel - 1].label.toLowerCase()}` : ""}
+                    </span>
+                  </p>
+                  {c.note && <p className="mt-0.5 text-[15px] leading-snug break-words">{c.note}</p>}
+                  {hearts}
+                </div>
+                <span className="shrink-0 pt-0.5 text-[13px] font-medium text-ink-3">{when(c.day)}</span>
+              </>
+            )}
+          </HeartRow>
         ))}
       </ul>
     </section>

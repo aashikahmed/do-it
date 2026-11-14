@@ -38,6 +38,7 @@ function bundle(opts: { cadence: Cadence; start: Day; days: number; today: Day; 
     freezes: [],
     nudges: [],
     misses: [],
+    hearts: [],
     canAnswerToday: true,
     state: computePactState(pact, members, checkins, [], opts.today),
     today: opts.today,

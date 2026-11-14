@@ -350,6 +350,19 @@ export async function nudge(input: { pactId: string; toUser: string; about?: "to
   return { ok: true };
 }
 
+/** Send (or take back) a heart on someone else's check-in. RLS keeps it to current members and other people's check-ins. */
+export async function setHeart(input: { pactId: string; checkinId: string; on: boolean }): Promise<ActionResult> {
+  if (!uuid.safeParse(input.pactId).success || !uuid.safeParse(input.checkinId).success) return fail("Can't send that right now");
+  const { supabase, userId } = await requireUser();
+  const { error } = input.on
+    ? await supabase.from("hearts").insert({ pact_id: input.pactId, checkin_id: input.checkinId, from_user: userId })
+    : await supabase.from("hearts").delete().eq("checkin_id", input.checkinId).eq("from_user", userId);
+  // a second double-tap racing the first is fine
+  if (error && !error.message.includes("duplicate key")) return fail(friendly(error.message));
+  refresh();
+  return { ok: true };
+}
+
 /**
  * Freeze the missed run before today. `older` leaves out yesterday's link when it can still be made up,
  * so you can freeze the day before and make up yesterday.
