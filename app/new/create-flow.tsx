@@ -459,7 +459,7 @@ export function CreateFlow() {
                 </div>
                 <p className="mt-4 text-[15px] leading-snug text-ink-2">
                   {cadenceText({ kind: "break", cadence: breakCadence, times_per_week: 7 - d.allowance, duration_days: d.durationDays, measure: d.mode === "amount" ? "count" : "none", target: d.limit, unit: d.limitUnit, rest_days: d.restDays, limit_step: d.limitStep })}.
-                  {" "}You get {freezesFor(breakCadence, d.durationDays)} {freezesFor(breakCadence, d.durationDays) === 1 ? "freeze" : "freezes"} to save the chain.
+                  {" "}Everyone gets {freezesFor(breakCadence, d.durationDays)} {freezesFor(breakCadence, d.durationDays) === 1 ? "freeze" : "freezes"} of their own to save the chain.
                 </p>
                 <button onClick={() => setMoreOpen(true)} className="mt-3 h-11 text-[16px] font-bold text-blue">
                   More options{optionCount(d) ? ` (${optionCount(d)} on)` : ""}
@@ -585,7 +585,7 @@ export function CreateFlow() {
                   ))}
                 </div>
                 <p className="mt-6 text-[15px] leading-snug text-ink-2">
-                  You get {freezesFor(d.cadence, d.durationDays)} {freezesFor(d.cadence, d.durationDays) === 1 ? "freeze" : "freezes"} to save the chain if someone slips.
+                  Everyone gets {freezesFor(d.cadence, d.durationDays)} {freezesFor(d.cadence, d.durationDays) === 1 ? "freeze" : "freezes"} of their own to save the chain if they slip.
                 </p>
               </>
             )}

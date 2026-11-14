@@ -109,7 +109,9 @@ async function remind(admin: ReturnType<typeof createAdminClient>, now: Date, pu
       admin.from("pact_members").select("pact_id,user_id,joined_on,left_on,profile:profiles(display_name,timezone)").in("pact_id", ids).order("pact_id").order("user_id"),
     ),
     fetchAll<C>(() => admin.from("checkins").select("pact_id,user_id,day").in("pact_id", ids).order("id")),
-    fetchAll<{ pact_id: string; period_start: string }>(() => admin.from("freezes").select("pact_id,period_start").in("pact_id", ids).order("pact_id").order("period_start")),
+    fetchAll<{ pact_id: string; period_start: string; paid_by: string | null; covers: string | null }>(() =>
+      admin.from("freezes").select("pact_id,period_start,paid_by,covers").in("pact_id", ids).order("pact_id").order("period_start").order("id"),
+    ),
     // break pacts count this week's "I gave in"s, so look back further than yesterday
     fetchAll<C>(() => admin.from("misses").select("pact_id,user_id,day").in("pact_id", ids).gte("day", addDays(utcToday, -9)).order("pact_id").order("user_id")),
   ]);
@@ -120,7 +122,7 @@ async function remind(admin: ReturnType<typeof createAdminClient>, now: Date, pu
       pact,
       ms,
       cs,
-      (freezes ?? []).filter((f) => f.pact_id === pact.id).map((f) => f.period_start),
+      (freezes ?? []).filter((f) => f.pact_id === pact.id),
       todayIn(pact.timezone, now),
       (misses ?? []).filter((x) => x.pact_id === pact.id),
     );
@@ -303,7 +305,8 @@ async function breakMorning(
       const slipped = p.owing.filter((u) => answered(u) || (p.slips[u] ?? 0) > 0);
       const names = slipped.map((u) => firstName(nameOf(ms, u)));
       const repair = state.repair;
-      const canFreeze = !!repair && repair.periods.length <= state.freezesLeft;
+      // someone in the pact can pay for it (their own, or one given by a partner)
+      const canFreeze = !!repair;
       const unit = pact.cadence === "daily" ? "day" : "week";
       if (names.length) {
         bad = {

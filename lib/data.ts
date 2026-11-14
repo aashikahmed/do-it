@@ -88,7 +88,8 @@ export interface PactBundle {
   /** everyone who was ever in it (history + streak math) */
   allMembers: Member[];
   checkins: Checkin[];
-  freezes: { period_start: Day; used_by: string | null }[];
+  /** one row per person covered; paid_by differs from covers when someone gave one of theirs */
+  freezes: { period_start: Day; used_by: string | null; paid_by: string | null; covers: string | null }[];
   /** nudges sent today (pact timezone) */
   nudges: { from_user: string; to_user: string }[];
   /** "I missed it" calls (build pacts) and every "I gave in" (break pacts) */
@@ -152,7 +153,7 @@ export async function loadBundles(supabase: SupabaseClient, pactIds?: string | s
         .order("created_at", { ascending: false })
         .order("id"),
     ),
-    scope(supabase.from("freezes").select("pact_id,period_start,used_by"), "pact_id"),
+    scope(supabase.from("freezes").select("pact_id,period_start,used_by,paid_by,covers"), "pact_id"),
     scope(supabase.from("nudges").select("pact_id,from_user,to_user,day").gte("day", addDays(todayIn("UTC"), -2)), "pact_id"),
     // build pacts only need yesterday's calls; break pacts show every "I gave in" in their history
     fetchAll<Row>(() => scope(supabase.from("misses").select("pact_id,user_id,day"), "pact_id").order("day").order("user_id")),
@@ -175,7 +176,7 @@ export async function loadBundles(supabase: SupabaseClient, pactIds?: string | s
       }))
       .sort((a, b) => a.joined_at.localeCompare(b.joined_at));
     const cs = ((checkins.data ?? []) as Checkin[]).filter((c) => c.pact_id === pact.id).map((c) => ({ ...c, value: c.value === null ? null : Number(c.value) }));
-    const fz = ((freezes.data ?? []) as (Row & { period_start: Day; used_by: string | null })[]).filter((f) => f.pact_id === pact.id);
+    const fz = ((freezes.data ?? []) as (Row & { period_start: Day; used_by: string | null; paid_by: string | null; covers: string | null })[]).filter((f) => f.pact_id === pact.id);
     const nd = ((nudges.data ?? []) as Row[])
       .filter((n) => n.pact_id === pact.id && n.day === today)
       .map((n) => ({ from_user: n.from_user as string, to_user: n.to_user as string }));
@@ -185,14 +186,14 @@ export async function loadBundles(supabase: SupabaseClient, pactIds?: string | s
       members: ms.filter((m) => !m.left_on),
       allMembers: ms,
       checkins: cs,
-      freezes: fz.map((f) => ({ period_start: f.period_start, used_by: f.used_by })),
+      freezes: fz.map((f) => ({ period_start: f.period_start, used_by: f.used_by, paid_by: f.paid_by, covers: f.covers })),
       nudges: nd,
       misses: calls,
       hearts: (hearts.data as Row[])
         .filter((h) => h.pact_id === pact.id)
         .map((h) => ({ checkin_id: h.checkin_id as string, from_user: h.from_user as string, created_at: h.created_at as string })),
       canAnswerToday: canAnswerToday(pact),
-      state: computePactState(pact, ms, cs, fz.map((f) => f.period_start), today, calls),
+      state: computePactState(pact, ms, cs, fz, today, calls),
       today,
       yesterday: addDays(today, -1),
     };

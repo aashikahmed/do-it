@@ -62,6 +62,16 @@ export interface MissCore {
  * exactly one check-in, hasn't logged yesterday, and hasn't called it a miss. It doesn't break the
  * streak until midnight. Mirrors checkins_guard() in SQL, which allows logging yesterday until then.
  */
+/**
+ * A freeze spent on a period. Everyone has their own freezes: `paid_by` is whose allowance it used, `covers` whose
+ * miss it covered (they differ when someone gave one of theirs). Old rows from shared freezes have no `covers`.
+ */
+export interface FreezeCore {
+  period_start: Day;
+  paid_by?: string | null;
+  covers?: string | null;
+}
+
 export type PeriodStatus = "done" | "frozen" | "late" | "missed" | "open" | "upcoming";
 
 export interface Period {
@@ -81,6 +91,8 @@ export interface Period {
   rest: boolean;
   /** break pacts: days each member gave in during this period */
   slips: Record<string, number>;
+  /** whose miss a freeze would have to cover: short of the target once it's over, or over the allowance already */
+  culprits: string[];
 }
 
 export type Phase = "upcoming" | "active" | "ended";
@@ -96,13 +108,15 @@ export interface PactState {
   need: number;
   streak: number;
   best: number;
+  /** freezes spent in this pact, by anyone */
   freezesUsed: number;
-  freezesLeft: number;
+  /** each current member's own freezes left (everyone gets `freezes_allowed`) */
+  freezesLeftBy: Record<string, number>;
   /** the period that ended yesterday and can still be made up today */
   late: Period | null;
   /**
    * consecutive missed (or late) periods right before the current one that freezes could cover.
-   * Offered when the missed ones fit in the freezes left; a late one can be made up instead.
+   * Offered when someone in the pact could pay for the missed ones (see planFreezes); a late one can be made up instead.
    */
   repair: { periods: Day[]; previous: number } | null;
   completion: { done: number; closed: number; total: number };
@@ -136,10 +150,12 @@ export function computePactState(
   pact: PactCore,
   members: MemberCore[],
   checkins: CheckinCore[],
-  frozenStarts: Day[],
+  freezes: (Day | FreezeCore)[],
   today: Day,
   misses: MissCore[] = [],
 ): PactState {
+  const fz: FreezeCore[] = freezes.map((f) => (typeof f === "string" ? { period_start: f } : f));
+  const frozenStarts = fz.map((f) => f.period_start);
   const len = periodLength(pact);
   const need = pact.cadence === "daily" ? 1 : pact.times_per_week;
   const endDate = pactEndDate(pact);
@@ -229,7 +245,9 @@ export function computePactState(
         owing.every((u) => (counts[u] ?? 0) === periodNeed - 1 && !seen.has(`${u}|${yesterday}`) && !calledMiss.has(u));
       status = complete ? "done" : frozen.has(start) ? "frozen" : fixable ? "late" : "missed";
     } else status = complete ? "done" : broken ? (frozen.has(start) ? "frozen" : "missed") : "open";
-    periods.push({ index: i, start, end, status, required, counts, owing, madeUp: complete && madeUp.has(i), rest, slips });
+    // over: short of the target. still running (a break pact lost early): whoever went over the allowance
+    const culprits = rest || complete ? [] : end < today ? owing : required.filter((u) => (slips[u] ?? 0) > days - periodNeed);
+    periods.push({ index: i, start, end, status, required, counts, owing, madeUp: complete && madeUp.has(i), rest, slips, culprits });
   }
 
   const phase: Phase = today < pact.start_date ? "upcoming" : today > endDate ? "ended" : "active";
@@ -261,17 +279,20 @@ export function computePactState(
     else if (p.status === "upcoming") break;
   }
 
-  const freezesUsed = frozenStarts.length;
-  const freezesLeft = Math.max(0, pact.freezes_allowed - freezesUsed);
+  const freezesUsed = fz.length;
+  const freezesLeftBy: Record<string, number> = {};
+  for (const m of members) {
+    if (m.left_on && m.left_on <= today) continue;
+    const spent = fz.filter((f) => f.paid_by === m.user_id).length;
+    freezesLeftBy[m.user_id] = Math.max(0, pact.freezes_allowed - spent);
+  }
 
   let repair: PactState["repair"] = null;
   // a break pact's current period can already be lost (someone gave in today): it can be frozen right away
   if (current && (current.index > 0 || current.status === "missed")) {
     const missed: Day[] = [];
     let j = current.status === "missed" ? current.index : current.index - 1;
-    let fixable = 0;
     while (j >= 0 && (periods[j].status === "missed" || periods[j].status === "late")) {
-      if (periods[j].status === "late") fixable++;
       missed.push(periods[j].start);
       j--;
     }
@@ -281,8 +302,11 @@ export function computePactState(
       if (s === "done" || s === "frozen") restores++;
       else break;
     }
-    // the late one can be made up instead, so only the older misses must fit in the freezes left
-    if (missed.length > 0 && restores > 0 && freezesLeft > 0 && missed.length - fixable <= freezesLeft) {
+    // the late one can be made up instead, so only the older misses must be payable, by someone
+    const older = missed.filter((d) => periods.find((p) => p.start === d)?.status !== "late");
+    const anyLeft = Object.values(freezesLeftBy).some((n) => n > 0);
+    const payable = Object.keys(freezesLeftBy).some((v) => plan(periods, freezesLeftBy, older, v).ok);
+    if (missed.length > 0 && restores > 0 && anyLeft && payable) {
       repair = { periods: missed.reverse(), previous: restores };
     }
   }
@@ -302,7 +326,7 @@ export function computePactState(
     streak,
     best,
     freezesUsed,
-    freezesLeft,
+    freezesLeftBy,
     late,
     repair,
     completion: {
@@ -314,7 +338,48 @@ export function computePactState(
   };
 }
 
-/** freezes granted for a pact length — mirrors create_pact() in SQL */
+export interface FreezePlan {
+  /** everyone missing from these periods can be covered */
+  ok: boolean;
+  /** one freeze per person who missed, per period; paidBy differs from covers when it's a gift */
+  payments: { period: Day; covers: string; paidBy: string }[];
+  /** people the viewer would have to give one of theirs, because they're out */
+  gifts: string[];
+  /** people nobody can cover (they're out, and so is the viewer) */
+  stuck: string[];
+}
+
+/**
+ * Who pays to freeze `periods`, when `viewer` taps it. Each person who missed pays from their own freezes; when
+ * they're out, the viewer gives one of theirs. Anyone can tap it, like before. Mirrors use_freezes() in SQL.
+ */
+export function planFreezes(state: Pick<PactState, "periods" | "freezesLeftBy">, periods: Day[], viewer: string): FreezePlan {
+  return plan(state.periods, state.freezesLeftBy, periods, viewer);
+}
+
+function plan(all: Period[], leftBy: Record<string, number>, periods: Day[], viewer: string): FreezePlan {
+  const left = { ...leftBy };
+  const out: FreezePlan = { ok: true, payments: [], gifts: [], stuck: [] };
+  for (const d of periods) {
+    const p = all.find((x) => x.start === d);
+    for (const u of p?.culprits ?? []) {
+      let paidBy: string | null = null;
+      if ((left[u] ?? 0) > 0) paidBy = u;
+      else if ((left[viewer] ?? 0) > 0) paidBy = viewer;
+      if (!paidBy) {
+        out.ok = false;
+        if (!out.stuck.includes(u)) out.stuck.push(u);
+        continue;
+      }
+      left[paidBy]--;
+      if (paidBy !== u && !out.gifts.includes(u)) out.gifts.push(u);
+      out.payments.push({ period: d, covers: u, paidBy });
+    }
+  }
+  return out;
+}
+
+/** freezes each person gets for a pact length — mirrors create_pact() in SQL */
 export function freezesFor(cadence: Cadence, durationDays: number) {
   return cadence === "daily" ? Math.max(1, Math.floor(durationDays / 10)) : Math.max(1, Math.floor(durationDays / 28));
 }
