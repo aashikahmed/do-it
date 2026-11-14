@@ -13,6 +13,7 @@ const FILTERS: { id: string; label: string; kinds: EventKind[] | null }[] = [
   { id: "miss", label: "Misses", kinds: ["miss"] },
   { id: "freeze", label: "Freezes", kinds: ["freeze"] },
   { id: "nudge", label: "Nudges", kinds: ["nudge"] },
+  { id: "heart", label: "Hearts", kinds: ["heart"] },
   { id: "people", label: "Sign-ups and joins", kinds: ["signup", "join", "leave"] },
   { id: "pacts", label: "New pacts and rounds", kinds: ["pact", "round"] },
 ];
@@ -23,6 +24,7 @@ const DOT: Record<EventKind, string> = {
   miss: "border-2 border-ember bg-paper",
   freeze: "bg-ice",
   nudge: "bg-ember",
+  heart: "bg-rose",
   join: "bg-blue",
   leave: "border-2 border-ink-3 bg-paper",
   pact: "bg-violet",

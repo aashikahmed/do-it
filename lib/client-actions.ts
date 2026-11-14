@@ -29,6 +29,7 @@ export const checkIn = wrap(A.checkIn);
 export const updateCheckIn = wrap(A.updateCheckIn);
 export const undoCheckIn = wrap(A.undoCheckIn);
 export const nudge = wrap(A.nudge);
+export const setHeart = wrap(A.setHeart);
 export const applyFreeze = wrap(A.applyFreeze);
 export const callMiss = wrap(A.callMiss);
 export const askForHelp = wrap(A.askForHelp);
