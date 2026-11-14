@@ -124,7 +124,7 @@ function pactRow(b: PactBundle): PactRow {
     members: b.members.length,
     streak: b.state.streak,
     unit: p.cadence === "daily" ? (b.state.streak === 1 ? "day" : "days") : b.state.streak === 1 ? "week" : "weeks",
-    freezes: `${b.state.freezesUsed} of ${p.freezes_allowed}`,
+    freezes: `${b.state.freezesUsed} (${p.freezes_allowed} each)`,
     status: pactStatus(b),
     round: p.round,
     createdAt: p.created_at,
@@ -345,8 +345,8 @@ export async function getActivity() {
     fetchAll<{ pact_id: string; user_id: string; day: string; created_at: string }>(() =>
       b.admin.from("misses").select("pact_id,user_id,day,created_at").gte("created_at", since).order("created_at", { ascending: false }).order("user_id"),
     ),
-    fetchAll<{ pact_id: string; period_start: string; used_by: string | null; created_at: string }>(() =>
-      b.admin.from("freezes").select("pact_id,period_start,used_by,created_at").gte("created_at", since).order("created_at", { ascending: false }).order("pact_id"),
+    fetchAll<{ pact_id: string; period_start: string; used_by: string | null; paid_by: string | null; covers: string | null; created_at: string }>(() =>
+      b.admin.from("freezes").select("pact_id,period_start,used_by,paid_by,covers,created_at").gte("created_at", since).order("created_at", { ascending: false }).order("pact_id"),
     ),
     fetchAll<{ id: string; pact_id: string; from_user: string; to_user: string; created_at: string }>(() =>
       b.admin.from("nudges").select("id,pact_id,from_user,to_user,created_at").gte("created_at", since).order("created_at", { ascending: false }).order("id"),
@@ -410,7 +410,14 @@ export async function getActivity() {
     });
   }
   for (const f of freezes.data) {
-    ev.push({ key: `f${f.pact_id}${f.period_start}`, kind: "freeze", at: f.created_at, text: `${who(f.used_by)} froze the ${unitOf(f.pact_id)} of ${formatDay(f.period_start)}`, pactId: f.pact_id, pact: label(f.pact_id) });
+    const what = `the ${unitOf(f.pact_id)} of ${formatDay(f.period_start)}`;
+    const text =
+      f.covers && f.paid_by && f.paid_by !== f.covers
+        ? `${who(f.paid_by)} gave ${who(f.covers)} a freeze for ${what}`
+        : f.covers && f.covers !== f.used_by
+          ? `${who(f.used_by)} used ${who(f.covers)}'s freeze for ${what}`
+          : `${who(f.used_by)} froze ${what}`;
+    ev.push({ key: `f${f.pact_id}${f.period_start}${f.covers ?? ""}`, kind: "freeze", at: f.created_at, text: text, pactId: f.pact_id, pact: label(f.pact_id) });
   }
   for (const n of nudges.data) {
     ev.push({ key: `n${n.id}`, kind: "nudge", at: n.created_at, text: `${who(n.from_user)} nudged ${who(n.to_user)}`, pactId: n.pact_id, pact: label(n.pact_id) });

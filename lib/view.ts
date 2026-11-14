@@ -1,6 +1,6 @@
 import type { PactBundle } from "./data";
 import { formatDay, diffDays, type Day } from "./dates";
-import { limitOn, type Cadence, type Kind } from "./streak";
+import { limitOn, planFreezes, type Cadence, type Kind } from "./streak";
 
 export function listNames(names: string[], max = 2) {
   if (names.length === 0) return "";
@@ -299,4 +299,42 @@ export function needsMe(b: PactBundle, me: string) {
   if (!b.state.current.required.includes(me)) return false;
   if (b.pact.cadence === "daily") return !b.checkins.some((c) => c.user_id === me && c.day === b.today);
   return (b.state.current.counts[me] ?? 0) < b.state.need;
+}
+
+/** your own freezes left in this pact */
+export function myFreezes(b: Pick<PactBundle, "state">, me: string) {
+  return b.state.freezesLeftBy[me] ?? 0;
+}
+
+/**
+ * What tapping "use a freeze" for `periods` would do, from `me`'s side: whether it can, the button, and one line on
+ * whose freezes it uses. Each person's miss uses their own; when they're out, `me` gives one of theirs.
+ */
+export function freezeOffer(b: Pick<PactBundle, "state" | "members">, me: string, periods: Day[]) {
+  const plan = planFreezes(b.state, periods, me);
+  const name = (u: string) => firstName(b.members.find((m) => m.user_id === u)?.name ?? "Someone");
+  const n = plan.payments.length;
+  const mine = myFreezes(b, me);
+  const notes: string[] = [];
+  const own = plan.payments.filter((p) => p.paidBy === me && p.covers === me).length;
+  if (own) notes.push(`Uses ${own === 1 ? "1" : own} of your ${mine}.`);
+  const theirs = [...new Set(plan.payments.filter((p) => p.paidBy === p.covers && p.covers !== me).map((p) => p.covers))];
+  if (theirs.length) notes.push(theirs.length === 1 ? `Uses one of ${name(theirs[0])}'s own freezes.` : `Uses ${listNames(theirs.map(name))}'s own freezes.`);
+  if (plan.gifts.length) {
+    const g = listNames(plan.gifts.map(name));
+    notes.push(`${g} ${plan.gifts.length === 1 ? "is" : "are"} out, so ${plan.gifts.length === 1 ? "it comes" : "they come"} from yours (${mine} left).`);
+  }
+  if (!plan.ok) {
+    if (plan.stuck.includes(me)) {
+      const givers = b.members.filter((m) => m.user_id !== me && myFreezes(b, m.user_id) > 0).map((m) => firstName(m.name));
+      notes.splice(0, notes.length, `You're out of freezes.${givers.length ? ` ${listNames(givers)} can give you one.` : ""}`);
+    } else {
+      const s = listNames(plan.stuck.map(name));
+      notes.splice(0, notes.length, `${s} ${plan.stuck.length === 1 ? "is" : "are"} out of freezes, and so are you.`);
+    }
+  }
+  const button = plan.gifts.length
+    ? `🎁 Give ${listNames(plan.gifts.map(name))} ${n === 1 ? "a freeze" : `${n} freezes`}`
+    : `🧊 Use ${n === 1 ? "a freeze" : `${n} freezes`}`;
+  return { ok: plan.ok, n, button, note: notes.join(" "), gifts: plan.gifts, payments: plan.payments };
 }

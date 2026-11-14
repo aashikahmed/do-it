@@ -8,7 +8,8 @@ import { notifyCheckin } from "@/lib/notify";
 import { sendPush } from "@/lib/push";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { addDays, isValidTimeZone, todayIn } from "@/lib/dates";
-import { firstName, makeUpLabel } from "@/lib/view";
+import { firstName, listNames, makeUpLabel } from "@/lib/view";
+import { planFreezes } from "@/lib/streak";
 import { deadlineText, pactDeadline, tzFor } from "@/lib/reminders";
 
 export type ActionResult<T = undefined> = { ok: true; data?: T } | { ok: false; error: string };
@@ -376,21 +377,30 @@ export async function applyFreeze(pactId: string, which: "all" | "older" = "all"
   if (!repair) return fail("There's nothing to freeze right now");
   const periods = which === "older" ? repair.periods.filter((p) => p !== bundle.state.late?.start) : repair.periods;
   if (!periods.length) return fail("There's nothing to freeze right now");
-  // one transaction in SQL: validates every period really was missed, all or nothing
+  const plan = planFreezes(bundle.state, periods, userId);
+  if (!plan.ok) return fail("No freezes left");
+  // one transaction in SQL: validates every period really was missed, pays the same way, all or nothing
   const { error } = await supabase.rpc("use_freezes", { p_pact: pactId, p_periods: periods });
   if (error) return fail(friendly(error.message));
   // break pacts: no pushes about the habit; partners see the frozen link next time they look
   if (bundle.pact.kind !== "break") after(async () => {
-    const name = await displayName(userId);
-    await sendPush(
-      bundle.members.map((m) => m.user_id).filter((u) => u !== userId),
-      {
-        title: `🧊 ${name} used a freeze`,
-        body: `${bundle.pact.title} streak is safe. Don't make it a habit.`,
-        url: `/p/${pactId}`,
-        tag: `pact-${pactId}`,
-      },
-    );
+    const name = firstName(await displayName(userId));
+    const nameOf = (u: string) => firstName(bundle.members.find((m) => m.user_id === u)?.name ?? "Someone");
+    const others = bundle.members.map((m) => m.user_id).filter((u) => u !== userId);
+    // someone else's miss paid from their own freezes: they should know it was theirs
+    const theirs = others.filter((u) => !plan.gifts.includes(u) && plan.payments.some((p) => p.covers === u && p.paidBy === u));
+    const rest = others.filter((u) => !plan.gifts.includes(u) && !theirs.includes(u));
+    const push = (to: string[], title: string, body: string) =>
+      sendPush(to, { title, body, url: `/p/${pactId}`, tag: `pact-${pactId}` });
+    await Promise.all([
+      push(plan.gifts.filter((u) => u !== userId), `🎁 ${name} gave you a freeze`, `${bundle.pact.title} streak is safe. You were out, so it came from ${name}'s.`),
+      push(theirs, `🧊 ${name} used one of your freezes`, `${bundle.pact.title} streak is safe.`),
+      push(
+        rest,
+        plan.gifts.length ? `🧊 ${name} gave ${listNames(plan.gifts.map(nameOf))} a freeze` : `🧊 ${name} used a freeze`,
+        `${bundle.pact.title} streak is safe. Don't make it a habit.`,
+      ),
+    ]);
   });
   refresh();
   return { ok: true, data: { restored: repair.previous } };
@@ -415,7 +425,7 @@ export async function callMiss(pactId: string, opts: { when?: "today" | "yesterd
     if (opts.freeze) {
       const fresh = await getPactForUser(supabase, pactId);
       const repair = fresh?.state.repair;
-      if (repair && repair.periods.length <= fresh.state.freezesLeft) {
+      if (repair && planFreezes(fresh.state, repair.periods, userId).ok) {
         const { error: fe } = await supabase.rpc("use_freezes", { p_pact: pactId, p_periods: repair.periods });
         if (fe) return fail(friendly(fe.message));
         frozen = true;
@@ -430,7 +440,7 @@ export async function callMiss(pactId: string, opts: { when?: "today" | "yesterd
       const { pact, state } = bundle;
       const unit = pact.cadence === "daily" ? "day" : "week";
       const day = state.late ? makeUpLabel(pact.cadence, state.late) : "yesterday";
-      const canFreeze = !!state.repair && state.repair.periods.length <= state.freezesLeft;
+      const canFreeze = !!state.repair;
       await sendPush(
         bundle.members.map((m) => m.user_id).filter((u) => u !== userId),
         {

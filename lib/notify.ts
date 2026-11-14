@@ -27,13 +27,13 @@ export async function notifyCheckin(pactId: string, actorId: string, day: string
     fetchAll<{ user_id: string; day: string; value: number | null; made_up: boolean }>(() =>
       admin.from("checkins").select("user_id,day,value,made_up").eq("pact_id", pactId).order("day").order("user_id"),
     ),
-    admin.from("freezes").select("period_start").eq("pact_id", pactId),
+    admin.from("freezes").select("period_start,paid_by,covers").eq("pact_id", pactId),
     admin.from("misses").select("user_id,day").eq("pact_id", pactId),
   ]);
   if (!pact || !members) return;
   const all = members as MemberRow[];
   const today = todayIn(pact.timezone);
-  const state = computePactState(pact, all, checkins ?? [], (freezes ?? []).map((f) => f.period_start), today, misses ?? []);
+  const state = computePactState(pact, all, checkins ?? [], freezes ?? [], today, misses ?? []);
   const actorName = nameOf(all, actorId);
   const others = all.filter((m) => !m.left_on && m.user_id !== actorId).map((m) => m.user_id);
   const url = `/p/${pactId}`;

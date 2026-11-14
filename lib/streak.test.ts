@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addDays, diffDays, todayIn } from "./dates";
-import { computePactState, freezesFor, isRestDay, limitOn, type CheckinCore, type PactCore } from "./streak";
+import { computePactState, freezesFor, planFreezes, isRestDay, limitOn, type CheckinCore, type PactCore } from "./streak";
 
 const daily: PactCore = { cadence: "daily", times_per_week: 7, duration_days: 30, start_date: "2026-11-01", freezes_allowed: 3 };
 const A = "a";
@@ -67,10 +67,10 @@ describe("daily pacts", () => {
     expect(before.streak).toBe(3);
     expect(before.repair).toEqual({ periods: ["2026-11-04"], previous: 3 });
 
-    const after = computePactState(daily, both, checks, ["2026-11-04"], "2026-11-05");
+    const after = computePactState(daily, both, checks, [{ period_start: "2026-11-04", paid_by: B, covers: B }], "2026-11-05");
     expect(after.periods[3].status).toBe("frozen");
     expect(after.streak).toBe(4);
-    expect(after.freezesLeft).toBe(2);
+    expect(after.freezesLeftBy).toEqual({ [A]: 3, [B]: 2 });
     expect(after.repair).toBeNull();
   });
 
@@ -382,6 +382,68 @@ describe("weekly pacts", () => {
     const s = computePactState(weekly, both, [...ci(A, ...wk1, "2026-11-08"), ...ci(B, ...wk1)], [], "2026-11-15");
     expect(s.periods[1].status).toBe("missed");
     expect(s.repair).toEqual({ periods: ["2026-11-08"], previous: 1 });
+  });
+});
+
+describe("everyone has their own freezes", () => {
+  const pact = { ...daily, freezes_allowed: 1 };
+  // A and B kept Nov 1-3; B missed Nov 4 and today is Nov 5: make it up today, or freeze it
+  const days = range("2026-11-01", 3);
+  const checks = [...ci(A, ...days, "2026-11-04"), ...ci(B, ...days)];
+
+  it("a miss is paid from the freezes of whoever missed, whoever taps it", () => {
+    const s = computePactState(pact, both, checks, [], "2026-11-05");
+    expect(s.periods[3].culprits).toEqual([B]);
+    expect(s.repair).toEqual({ periods: ["2026-11-04"], previous: 3 });
+    for (const viewer of [A, B]) {
+      const plan = planFreezes(s, s.repair!.periods, viewer);
+      expect(plan.ok).toBe(true);
+      expect(plan.payments).toEqual([{ period: "2026-11-04", covers: B, paidBy: B }]);
+      expect(plan.gifts).toEqual([]);
+    }
+  });
+
+  it("when they're out, a partner can give one of theirs; they can't pay for themselves", () => {
+    // B already spent their only freeze earlier
+    const s = computePactState(pact, both, checks, [{ period_start: "2026-10-20", paid_by: B, covers: B }], "2026-11-05");
+    expect(s.freezesLeftBy).toEqual({ [A]: 1, [B]: 0 });
+    expect(s.repair).not.toBeNull();
+    const fromA = planFreezes(s, s.repair!.periods, A);
+    expect(fromA.ok).toBe(true);
+    expect(fromA.payments).toEqual([{ period: "2026-11-04", covers: B, paidBy: A }]);
+    expect(fromA.gifts).toEqual([B]);
+    const fromB = planFreezes(s, s.repair!.periods, B);
+    expect(fromB.ok).toBe(false);
+    expect(fromB.stuck).toEqual([B]);
+  });
+
+  it("nobody has one to give: no repair, the chain breaks", () => {
+    const spent = [
+      { period_start: "2026-10-20", paid_by: A, covers: A },
+      { period_start: "2026-10-21", paid_by: B, covers: B },
+    ];
+    const s = computePactState(pact, both, checks, spent, "2026-11-05");
+    expect(s.repair).toBeNull();
+    // making it up is still possible; past midnight it breaks
+    expect(s.periods[3].status).toBe("late");
+    expect(computePactState(pact, both, checks, spent, "2026-11-06").periods[3].status).toBe("missed");
+  });
+
+  it("both missed: each pays their own", () => {
+    const s = computePactState(pact, both, [...ci(A, ...days), ...ci(B, ...days)], [], "2026-11-05");
+    const plan = planFreezes(s, ["2026-11-04"], A);
+    expect(plan.payments.map((x) => x.paidBy).sort()).toEqual([A, B]);
+  });
+
+  it("someone who left keeps no freezes", () => {
+    const s = computePactState(pact, [both[0], { ...both[1], left_on: "2026-11-05" }], checks, [], "2026-11-05");
+    expect(Object.keys(s.freezesLeftBy)).toEqual([A]);
+  });
+
+  it("old shared freezes still freeze the period, and count against whoever used them", () => {
+    const s = computePactState(pact, both, checks, [{ period_start: "2026-11-04", paid_by: A }], "2026-11-05");
+    expect(s.periods[3].status).toBe("frozen");
+    expect(s.freezesLeftBy).toEqual({ [A]: 0, [B]: 1 });
   });
 });
 
