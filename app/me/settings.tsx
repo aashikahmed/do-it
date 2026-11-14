@@ -137,7 +137,7 @@ export function Settings({ me, email, googlePhoto }: { me: Me; email: string; go
 
       <section className="mt-3 rounded-[24px] bg-paper p-4 text-[15px] leading-snug text-ink-2">
         <p className="text-[17px] font-bold text-ink">How the chain works</p>
-        <p className="mt-2">Each day (or week) is one link. It closes when everyone in the pact checks in.</p>
+        <p className="mt-2">Each day (or week) is one link. It closes when everyone in the pact checks in. You only count from your first check-in, so someone who joins and never starts can&apos;t break it.</p>
         <p className="mt-2">Missed a day, or forgot to log it? You can make it up the next day, until midnight. Only yesterday, never older days.</p>
         <p className="mt-2">If it really was a miss, anyone can spend a freeze that day to patch it. Otherwise the chain breaks for the whole group. You get one freeze for every 10 days of a pact.</p>
       </section>

@@ -52,8 +52,11 @@ describe("joining mid-pact", () => {
   it("is starting until the chain counts them, the creator isn't", () => {
     expect(isStarting(daily, B)).toBe(true);
     expect(isStarting(daily, A)).toBe(false);
-    const later = bundle({ cadence: "daily", start: "2026-11-01", days: 30, today: "2026-11-11", bJoinedOn: "2026-11-11" });
+    const later = bundle({ cadence: "daily", start: "2026-11-01", days: 30, today: "2026-11-11", bJoinedOn: "2026-11-11", bCheckedIn: true });
     expect(isStarting(later, B)).toBe(false);
+    // joined but never checked in: still not counted
+    const quiet = bundle({ cadence: "daily", start: "2026-11-01", days: 30, today: "2026-11-11", bJoinedOn: "2026-11-11" });
+    expect(isStarting(quiet, B)).toBe(true);
   });
 
   it("isn't starting before the pact starts", () => {
@@ -62,25 +65,35 @@ describe("joining mid-pact", () => {
   });
 
   it("says when the chain counts them", () => {
-    expect(chainCountsText(daily, B, "them")).toBe("The chain counts them from tomorrow");
+    expect(chainCountsText(daily, B, "them")).toBe("The chain starts counting them after their first check-in");
+    const dailyIn = bundle({ cadence: "daily", start: "2026-11-01", days: 30, today: "2026-11-10", bJoinedOn: "2026-11-11", bCheckedIn: true });
+    expect(chainCountsText(dailyIn, B, "them")).toBe("The chain counts them from tomorrow");
     // weekly pact started on a Wednesday: joining on a Tuesday counts from tomorrow, on a Friday from Wednesday
-    const tue = bundle({ cadence: "weekly", start: "2026-11-04", days: 28, today: "2026-11-10", bJoinedOn: "2026-11-11" });
+    const tue = bundle({ cadence: "weekly", start: "2026-11-04", days: 28, today: "2026-11-10", bJoinedOn: "2026-11-11", bCheckedIn: true });
     expect(chainCountsText(tue, B, "you")).toBe("The chain counts you from tomorrow");
-    const fri = bundle({ cadence: "weekly", start: "2026-11-04", days: 28, today: "2026-11-06", bJoinedOn: "2026-11-11" });
+    const fri = bundle({ cadence: "weekly", start: "2026-11-04", days: 28, today: "2026-11-06", bJoinedOn: "2026-11-11", bCheckedIn: true });
     expect(isStarting(fri, B)).toBe(true);
     expect(chainCountsText(fri, B, "you")).toBe("The chain counts you from Wednesday");
   });
 
   it("is honest when the round ends before the chain can count them", () => {
-    const lastDay = bundle({ cadence: "daily", start: "2026-11-01", days: 10, today: "2026-11-10", bJoinedOn: "2026-11-11" });
+    const lastDay = bundle({ cadence: "daily", start: "2026-11-01", days: 10, today: "2026-11-10", bJoinedOn: "2026-11-11", bCheckedIn: true });
     expect(isStarting(lastDay, B)).toBe(true);
     expect(chainCountsText(lastDay, B, "them")).toBe("This round ends before the chain counts them");
   });
 
   it("tells the new member they're in and can check in now", () => {
-    expect(statusLine(daily, B)).toEqual({ text: "You're in. Check in today. The chain counts you from tomorrow.", tone: "info" });
+    expect(statusLine(daily, B)).toEqual({ text: "You're in. Check in today. The chain starts counting you after your first check-in.", tone: "info" });
     const fri = bundle({ cadence: "weekly", start: "2026-11-04", days: 28, today: "2026-11-06", bJoinedOn: "2026-11-11" });
-    expect(statusLine(fri, B).text).toBe("You're in. Log your days this week. The chain counts you from Wednesday.");
+    expect(statusLine(fri, B).text).toBe("You're in. Log your days this week. The chain starts counting you after your first check-in.");
+  });
+
+  it("tells the others the chain is safe while someone hasn't started", () => {
+    const aDone = bundle({ cadence: "daily", start: "2026-11-01", days: 30, today: "2026-11-12", bJoinedOn: "2026-11-11" });
+    aDone.checkins.push({ id: "x", pact_id: "p", user_id: A, day: "2026-11-12", value: null, note: null, feel: null, made_up: false, created_at: "" } as never);
+    aDone.state = computePactState(aDone.pact, aDone.members, aDone.checkins, [], "2026-11-12");
+    expect(aDone.state.current?.status).toBe("done");
+    expect(statusLine(aDone, A).text).toBe("Done for today. Sam hasn't started yet.");
   });
 
   it("doesn't change the creator's line: a new member doesn't hold up today's link", () => {

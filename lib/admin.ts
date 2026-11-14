@@ -310,7 +310,10 @@ function memberToday(b: PactBundle, m: Member): { text: string; tone: Tone } {
   if (s.phase === "ended") return { text: "Finished", tone: "done" };
   const cur = s.current;
   if (!cur) return { text: "", tone: "off" };
-  if (!cur.required.includes(m.user_id)) return { text: b.pact.cadence === "daily" ? "Counts from tomorrow" : "Counts from next week", tone: "off" };
+  if (!cur.required.includes(m.user_id)) {
+    if (!b.state.countsFrom[m.user_id]) return { text: "Hasn't started", tone: "off" };
+    return { text: b.pact.cadence === "daily" ? "Counts from tomorrow" : "Counts from next week", tone: "off" };
+  }
   if (brk && (cur.slips[m.user_id] ?? 0) > 0) return { text: "Gave in", tone: "risk" };
   if (b.pact.cadence === "weekly") {
     const n = cur.counts[m.user_id] ?? 0;

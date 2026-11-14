@@ -41,14 +41,31 @@ export async function notifyCheckin(pactId: string, actorId: string, day: string
   const mine = (checkins ?? []).find((c) => c.user_id === actorId && c.day === day);
   const did = mine?.value != null && pact.measure !== "none" ? ` (${formatValue(pact, Number(mine.value))})` : "";
 
+  // daily: still owes today. weekly: still short of this week's target.
+  const owes = (u: string) =>
+    pact.cadence === "daily"
+      ? !(checkins ?? []).some((c) => c.user_id === u && c.day === today)
+      : (cur?.counts[u] ?? 0) < state.need;
+  // in the pact but not counted yet (no check-in so far, or counting from the next period): nudged, never "everyone's in"
+  const notCounted = (u: string) => !(cur?.required.includes(u) ?? false);
+
   if (cur && cur.status === "done" && day >= cur.start && day <= cur.end && (cur.counts[actorId] ?? 0) <= state.need) {
     const unit = pact.cadence === "daily" ? "day" : "week";
-    await sendPush(others, {
-      title: `${pact.emoji} Everyone's in`,
-      body: `${actorName} closed it out. ${state.streak}-${unit} streak on ${pact.title}.`,
-      url,
-      tag: `pact-${pactId}`,
-    });
+    await Promise.all([
+      sendPush(others.filter((u) => !notCounted(u)), {
+        title: `${pact.emoji} Everyone's in`,
+        body: `${actorName} closed it out. ${state.streak}-${unit} streak on ${pact.title}.`,
+        url,
+        tag: `pact-${pactId}`,
+      }),
+      day === today &&
+        sendPush(others.filter((u) => notCounted(u) && owes(u)), {
+          title: `${pact.emoji} ${actorName} just did it${did}`,
+          body: `${pact.title}. Your turn.`,
+          url,
+          tag: `pact-${pactId}`,
+        }),
+    ]);
     return;
   }
   // a check-in for yesterday: the make-up day
@@ -84,12 +101,7 @@ export async function notifyCheckin(pactId: string, actorId: string, day: string
   }
   if (day !== today) return;
 
-  // daily: still owes today. weekly: still short of this week's target.
-  const owes = (u: string) =>
-    pact.cadence === "daily"
-      ? !(checkins ?? []).some((c) => c.user_id === u && c.day === today)
-      : (cur?.counts[u] ?? 0) < state.need;
-  const waiting = others.filter((u) => owes(u) && (cur?.required.includes(u) ?? false));
+  const waiting = others.filter(owes);
   // in bigger groups, only ping people who still owe a check-in
   const doneOthers = others.length <= 2 ? others.filter((u) => !waiting.includes(u)) : [];
   await Promise.all([
