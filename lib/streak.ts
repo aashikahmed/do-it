@@ -27,9 +27,16 @@ export interface MemberCore {
   left_on?: Day | null;
 }
 
-/** is this member on the hook for the period starting at `start`? */
+/** is this member in the pact for the period starting at `start` (joined, not left)? */
 export function isRequired(m: MemberCore, start: Day) {
   return m.joined_on <= start && (!m.left_on || start < m.left_on);
+}
+
+/** the first period start on or after `day`: a check-in mid-week counts you from the next week */
+function periodOnOrAfter(pact: Pick<PactCore, "start_date" | "cadence">, day: Day): Day {
+  const len = periodLength(pact);
+  const offset = Math.max(0, diffDays(pact.start_date, day));
+  return addDays(pact.start_date, Math.ceil(offset / len) * len);
 }
 
 export interface CheckinCore {
@@ -99,6 +106,11 @@ export interface PactState {
    */
   repair: { periods: Day[]; previous: number } | null;
   completion: { done: number; closed: number; total: number };
+  /**
+   * First period each member counts toward, or null if they haven't started. Nobody counts until their first
+   * check-in, so someone who joins and never shows up can't break the chain. Mirrors period_required() in SQL.
+   */
+  countsFrom: Record<string, Day | null>;
 }
 
 export function periodLength(p: Pick<PactCore, "cadence">) {
@@ -140,6 +152,8 @@ export function computePactState(
   const buckets: Record<string, number>[] = Array.from({ length: total }, () => ({}));
   const madeUp = new Set<number>();
   const seen = new Set<string>();
+  // first check-in that counts, per member: that's when they've started
+  const firstIn: Record<string, Day> = {};
   for (const c of checkins) {
     if (!memberIds.has(c.user_id)) continue;
     const key = `${c.user_id}|${c.day}`;
@@ -153,6 +167,7 @@ export function computePactState(
     const idx = Math.floor(offset / len);
     buckets[idx][c.user_id] = (buckets[idx][c.user_id] ?? 0) + 1;
     if (c.made_up) madeUp.add(idx);
+    if (!firstIn[c.user_id] || c.day < firstIn[c.user_id]) firstIn[c.user_id] = c.day;
   }
   const yesterday = addDays(today, -1);
   const calledMiss = new Set(misses.filter((m) => m.day === yesterday).map((m) => m.user_id));
@@ -171,13 +186,30 @@ export function computePactState(
     }
   }
 
+  // you count from the first period that starts on or after your first check-in (and not before you joined)
+  const countsFrom: Record<string, Day | null> = {};
+  for (const m of members) {
+    const first = firstIn[m.user_id];
+    if (!first) countsFrom[m.user_id] = null;
+    else {
+      const from = periodOnOrAfter(pact, first);
+      countsFrom[m.user_id] = from > m.joined_on ? from : m.joined_on;
+    }
+  }
+
   const periods: Period[] = [];
   for (let i = 0; i < total; i++) {
     const start = addDays(pact.start_date, i * len);
     const rawEnd = addDays(start, len - 1);
     const end = rawEnd > endDate ? endDate : rawEnd;
-    const required = members.filter((m) => isRequired(m, start)).map((m) => m.user_id);
     const counts = buckets[i];
+    const inPact = members.filter((m) => isRequired(m, start));
+    let required = inPact.filter((m) => countsFrom[m.user_id] !== null && countsFrom[m.user_id]! <= start).map((m) => m.user_id);
+    // nobody has started yet (the first days of a pact): whoever checked in during this period counts, else everyone
+    if (required.length === 0) {
+      const showedUp = inPact.filter((m) => (counts[m.user_id] ?? 0) > 0).map((m) => m.user_id);
+      required = showedUp.length ? showedUp : inPact.map((m) => m.user_id);
+    }
     const slips = slipBuckets[i];
     const rest = isRestDay(pact, start);
     // a period only needs as many check-ins as it has days
@@ -278,6 +310,7 @@ export function computePactState(
       closed: closed.length,
       total,
     },
+    countsFrom,
   };
 }
 

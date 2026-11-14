@@ -156,6 +156,79 @@ describe("daily pacts", () => {
   });
 });
 
+describe("nobody counts until their first check-in", () => {
+  // A and F built an 8-day streak; C joined on day 8 (counts from day 9) and never opened the app again
+  const C = "c";
+  const F = "f";
+  const trio = [
+    { user_id: A, joined_on: "2026-10-31" },
+    { user_id: F, joined_on: "2026-10-31" },
+    { user_id: C, joined_on: "2026-11-09" },
+  ];
+  const kept = (n: number) => [...ci(A, ...range("2026-11-01", n)), ...ci(F, ...range("2026-11-01", n))];
+
+  it("someone who never checks in can't break the chain", () => {
+    const s = computePactState(daily, trio, kept(14), [], "2026-11-15");
+    expect(s.countsFrom[C]).toBeNull();
+    expect(s.periods.slice(0, 14).every((p) => p.status === "done")).toBe(true);
+    expect(s.periods[10].required).toEqual([A, F]);
+    expect(s.streak).toBe(14);
+    expect(s.late).toBeNull();
+    expect(s.repair).toBeNull();
+  });
+
+  it("they count from their first check-in on, like everyone else", () => {
+    const s = computePactState(daily, trio, [...kept(14), ...ci(C, "2026-11-12")], [], "2026-11-15");
+    expect(s.countsFrom[C]).toBe("2026-11-12");
+    expect(s.periods[10].required).toEqual([A, F]);
+    expect(s.periods[11].required).toEqual([A, F, C]);
+    // C skipped the 13th and 14th: now those break the chain for everyone
+    expect(s.periods[11].status).toBe("done");
+    expect(s.periods[12].status).toBe("missed");
+    expect(s.streak).toBe(0);
+  });
+
+  it("never before the day they joined", () => {
+    const s = computePactState(daily, trio, [...kept(9), ...ci(C, "2026-11-08")], [], "2026-11-10");
+    expect(s.countsFrom[C]).toBe("2026-11-09");
+  });
+
+  it("weekly: a first check-in mid-week counts from the next week, on the first day it counts that week", () => {
+    const weekly: PactCore = { cadence: "weekly", times_per_week: 3, duration_days: 28, start_date: "2026-11-02", freezes_allowed: 1 };
+    const members = [{ user_id: A, joined_on: "2026-11-02" }, { user_id: C, joined_on: "2026-11-02" }];
+    const aWeek = ci(A, "2026-11-02", "2026-11-03", "2026-11-04");
+    const mid = computePactState(weekly, members, [...aWeek, ...ci(C, "2026-11-05")], [], "2026-11-06");
+    expect(mid.countsFrom[C]).toBe("2026-11-09");
+    expect(mid.current?.status).toBe("done");
+    const first = computePactState(weekly, members, [...aWeek, ...ci(C, "2026-11-02")], [], "2026-11-06");
+    expect(first.countsFrom[C]).toBe("2026-11-02");
+    expect(first.current?.owing).toEqual([C]);
+  });
+
+  it("before anyone has started, whoever showed up counts, else everyone", () => {
+    // weekly, nobody checked in on the first day: A's week still counts without C
+    const weekly: PactCore = { cadence: "weekly", times_per_week: 3, duration_days: 28, start_date: "2026-11-02", freezes_allowed: 1 };
+    const members = [{ user_id: A, joined_on: "2026-11-02" }, { user_id: C, joined_on: "2026-11-02" }];
+    const w = computePactState(weekly, members, ci(A, "2026-11-03", "2026-11-04", "2026-11-05"), [], "2026-11-06");
+    expect(w.periods[0].required).toEqual([A]);
+    expect(w.periods[0].status).toBe("done");
+    // daily, nobody checked in on day 1: it's still open for both to make up
+    const d = computePactState(daily, both, [], [], "2026-11-02");
+    expect(d.periods[0].required).toEqual([A, B]);
+    expect(d.late?.owing).toEqual([A, B]);
+    // A makes it up: A has started, day 1 counts with A alone
+    const made = computePactState(daily, both, [{ user_id: A, day: "2026-11-01", made_up: true }], [], "2026-11-02");
+    expect(made.periods[0].status).toBe("done");
+  });
+
+  it("a check-in over a break pact's limit isn't a start", () => {
+    const cut: PactCore = { cadence: "daily", times_per_week: 7, duration_days: 30, start_date: "2026-11-01", freezes_allowed: 3, kind: "break", target: 2 };
+    const s = computePactState(cut, both, [...ci(A, "2026-11-01", "2026-11-02"), { user_id: B, day: "2026-11-02", value: 5 }], [], "2026-11-03");
+    expect(s.countsFrom[B]).toBeNull();
+    expect(s.streak).toBe(2);
+  });
+});
+
 describe("make-up day", () => {
   const days = range("2026-11-01", 3);
   // A and B kept Nov 1-3; on Nov 4 only A checked in. It's Nov 5.

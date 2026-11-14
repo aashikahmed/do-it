@@ -252,7 +252,8 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
           const about = owesLate ? "yesterday" : starting ? "start" : "today";
           let status: string;
           if (state.phase === "upcoming") status = isMe ? "Ready" : `Joined ${formatDay(m.joined_at.slice(0, 10), { day: "numeric", month: "short" })}`;
-          else if (starting && (isBreak ? answerOn(b, m.user_id, b.today) === null : !todays && count === 0)) status = "Just joined";
+          else if (starting && (isBreak ? answerOn(b, m.user_id, b.today) === null : !todays && count === 0))
+            status = m.joined_at.slice(0, 10) < addDays(b.today, -1) ? "Hasn't started yet" : "Just joined";
           else if (isBreak) status = breakStatus(b, m.user_id, todays);
           else if (pact.cadence === "daily") status = todays ? describe(todays, pact) : "Not yet";
           else if (starting) status = `${count} this week${todays ? ", done today" : ""}`;
@@ -1609,8 +1610,8 @@ function MenuSheet({ b, me, open, onClose }: { b: PactBundle; me: Me; open: bool
       {b.pact.kind === "break" && <CravingPlanEditor b={b} me={me} />}
       <p className="mt-5 text-[14px] leading-snug text-ink-2">
         {b.pact.kind === "break"
-          ? "Each day closes a link when everyone says they stayed off it. You can answer until midnight the next day. If anyone gives in, the chain breaks for the whole group, unless someone uses a freeze. Notifications only come in the morning, and never say what the pact is about."
-          : "The chain closes a link when everyone checks in. Miss a day and you can still make it up the next day, until midnight, or anyone can use a freeze then. Otherwise the chain breaks for the whole group."}
+          ? "Each day closes a link when everyone says they stayed off it. You can answer until midnight the next day. If anyone gives in, the chain breaks for the whole group, unless someone uses a freeze. You only count once you've said yes for a day. Notifications only come in the morning, and never say what the pact is about."
+          : "The chain closes a link when everyone checks in. Miss a day and you can still make it up the next day, until midnight, or anyone can use a freeze then. Otherwise the chain breaks for the whole group. Nobody counts until their first check-in, so someone who never starts can't break it."}
       </p>
       <button
         disabled={busy}

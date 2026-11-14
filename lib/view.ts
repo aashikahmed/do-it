@@ -137,9 +137,14 @@ export function cadenceText(p: ScheduleBits) {
   return `${freq} for ${weeks} weeks`;
 }
 
+/** Has this person made a check-in that counts? Until then the chain doesn't count them (see countsFrom). */
+export function hasStarted(b: Pick<PactBundle, "state">, id: string) {
+  return !!b.state.countsFrom[id];
+}
+
 /**
- * Joined mid-pact: in it and free to check in now, but the chain counts them from the next period
- * (joining never reopens a period the group already closed; see join_pact in SQL).
+ * In the pact and free to check in now, but not counted by the chain yet: they haven't checked in at all, or they
+ * joined mid-pact and count from the next period (joining never reopens a period the group already closed).
  */
 export function isStarting(b: Pick<PactBundle, "state" | "members">, id: string) {
   const cur = b.state.current;
@@ -147,13 +152,14 @@ export function isStarting(b: Pick<PactBundle, "state" | "members">, id: string)
 }
 
 /**
- * When the chain starts counting someone who just joined: "The chain counts them from tomorrow" (or "from Monday",
- * the next pact week). Joining in the last period means this round ends first. No full stop, callers add one.
+ * When the chain starts counting someone: after their first check-in, or once started, "from tomorrow" (or "from
+ * Monday", the next pact week). Counting after the last period means this round ends first. No full stop, callers add one.
  */
 export function chainCountsText(b: Pick<PactBundle, "state" | "members" | "today">, id: string, who: "you" | "them") {
-  const joinedOn = b.members.find((m) => m.user_id === id)?.joined_on;
-  if (!joinedOn || joinedOn > b.state.endDate) return `This round ends before the chain counts ${who}`;
-  const when = diffDays(b.today, joinedOn) === 1 ? "tomorrow" : formatDay(joinedOn, { weekday: "long" });
+  const from = b.state.countsFrom[id];
+  if (!from) return `The chain starts counting ${who} after ${who === "you" ? "your" : "their"} first check-in`;
+  if (from > b.state.endDate) return `This round ends before the chain counts ${who}`;
+  const when = diffDays(b.today, from) === 1 ? "tomorrow" : formatDay(from, { weekday: "long" });
   return `The chain counts ${who} from ${when}`;
 }
 
@@ -227,6 +233,12 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
   }
   if (!others.length) return { text: "Done. Invite someone to share the chain.", tone: "done" };
   if (othersOwing.length) return { text: `Waiting on ${listNames(othersOwing.map((m) => firstName(m.name)))}`, tone: "wait" };
+  // the chain is safe, but someone in the pact hasn't checked in even once
+  const notYet = others.filter((m) => !hasStarted(b, m.user_id) && owes(m.user_id));
+  if (notYet.length) {
+    const names = listNames(notYet.map((m) => firstName(m.name)));
+    return { text: `${pact.cadence === "daily" ? "Done for today" : "Target hit this week"}. ${names} ${notYet.length === 1 ? "hasn't" : "haven't"} started yet.`, tone: "done" };
+  }
   return { text: pact.cadence === "daily" ? "Everyone's in today" : "Everyone hit the target this week", tone: "done" };
 }
 
