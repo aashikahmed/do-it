@@ -17,6 +17,7 @@
 - Profile photos: `profiles.avatar_url` is set only by server actions (Google photo or `avatars/<uid>/…` in our public bucket); client resizes to a 400px JPEG before upload.
 - Design tokens in app/globals.css (ink #10143A, mist, ultramarine, sun, ember, ice; per-pact `data-color`). Font: Bricolage Grotesque. Signature element: the chain (components/chain.tsx).
 - Copy voice: plain, sentence case, no "→", no all-caps labels.
+- Backlog: `BACKLOG.md`. Whenever we defer something, park an idea from a brainstorm, or the owner mentions a feature they're thinking about, add an entry there (format at the top of the file) without being asked. Check it before starting a related feature.
 - Prod: doit.launchit.ae → Vercel `do-it` (fra1) + Supabase `ubdkikowagrmghxsgssi` (eu-central-1). See README "Production". Never `supabase config push` from repo config (would disable Google auth).
 - Auth = Google OAuth + iOS handoff (`app/auth/callback`, `app/auth/handoff` confirm step, `app/api/auth/handoff`, `auth_handoffs`). A parked code is only released after "Yes, that was me" in the receiving browser (httpOnly `doit-handoff` cookie). Post-sign-in redirects go through `lib/safe-next.ts`. Email OTP is dev-only.
 - Merging to `main` deploys to prod immediately (Vercel Git). Apply migrations before merging; keep them compatible with the live code.
