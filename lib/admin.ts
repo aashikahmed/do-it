@@ -374,7 +374,7 @@ export async function getActivity() {
     for (const h of x.hearts) {
       if (h.created_at < since) continue;
       const to = x.checkins.find((c) => c.id === h.checkin_id)?.user_id ?? null;
-      ev.push({ key: `h${h.checkin_id}${h.from_user}`, kind: "heart", at: h.created_at, text: `${who(h.from_user)} sent ${who(to)} a heart`, pactId: x.pact.id, pact: label(x.pact.id) });
+      ev.push({ key: `h${h.checkin_id}${h.from_user}`, kind: "heart", at: h.created_at, text: `${who(h.from_user)} sent ${who(to)} ${h.kind === "fire" ? "a 🔥" : "a heart"}`, pactId: x.pact.id, pact: label(x.pact.id) });
     }
     if (x.pact.created_at >= since) {
       const round = x.pact.round > 1;

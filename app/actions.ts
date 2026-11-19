@@ -351,15 +351,23 @@ export async function nudge(input: { pactId: string; toUser: string; about?: "to
   return { ok: true };
 }
 
-/** Send (or take back) a heart on someone else's check-in. RLS keeps it to current members and other people's check-ins. */
-export async function setHeart(input: { pactId: string; checkinId: string; on: boolean }): Promise<ActionResult> {
+/**
+ * Send (or take back) a reaction on someone else's check-in. One per person per check-in:
+ * fire replaces a heart, a heart never replaces a fire. RLS keeps it to current members and other people's check-ins.
+ */
+export async function setHeart(input: { pactId: string; checkinId: string; on: boolean; kind?: "heart" | "fire" }): Promise<ActionResult> {
   if (!uuid.safeParse(input.pactId).success || !uuid.safeParse(input.checkinId).success) return fail("Can't send that right now");
+  const kind = input.kind === "fire" ? "fire" : "heart";
   const { supabase, userId } = await requireUser();
-  const { error } = input.on
-    ? await supabase.from("hearts").insert({ pact_id: input.pactId, checkin_id: input.checkinId, from_user: userId })
-    : await supabase.from("hearts").delete().eq("checkin_id", input.checkinId).eq("from_user", userId);
-  // a second double-tap racing the first is fine
-  if (error && !error.message.includes("duplicate key")) return fail(friendly(error.message));
+  const mine = () => supabase.from("hearts");
+  let { error } = input.on
+    ? await mine().insert({ pact_id: input.pactId, checkin_id: input.checkinId, from_user: userId, kind })
+    : await mine().delete().eq("checkin_id", input.checkinId).eq("from_user", userId);
+  // already reacted: upgrade to fire, otherwise leave it (a second double-tap racing the first is fine too)
+  if (error?.message.includes("duplicate key")) {
+    ({ error } = kind === "fire" ? await mine().update({ kind }).eq("checkin_id", input.checkinId).eq("from_user", userId) : { error: null });
+  }
+  if (error) return fail(friendly(error.message));
   refresh();
   return { ok: true };
 }
