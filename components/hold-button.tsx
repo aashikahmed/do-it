@@ -13,11 +13,14 @@ export function HoldButton({
   label,
   holdingLabel = "Keep holding",
   busy,
+  disabled,
   onComplete,
 }: {
   label: string;
   holdingLabel?: string;
   busy?: boolean;
+  /** not ready yet (e.g. a choice still to make): shown faded, ignores presses */
+  disabled?: boolean;
   onComplete: () => void;
 }) {
   const progress = useMotionValue(0);
@@ -28,7 +31,7 @@ export function HoldButton({
   const fired = useRef(false);
 
   function start(e: React.PointerEvent) {
-    if (busy || e.button !== 0) return;
+    if (busy || disabled || e.button !== 0) return;
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     fired.current = false;
     setHolding(true);
@@ -57,20 +60,20 @@ export function HoldButton({
   return (
     <motion.button
       type="button"
-      disabled={busy}
+      disabled={busy || disabled}
       onPointerDown={start}
       onPointerUp={cancel}
       onPointerCancel={cancel}
       onPointerLeave={cancel}
       onContextMenu={(e) => e.preventDefault()}
       onKeyDown={(e) => {
-        if ((e.key === "Enter" || e.key === " ") && !busy && !e.repeat) {
+        if ((e.key === "Enter" || e.key === " ") && !busy && !disabled && !e.repeat) {
           e.preventDefault();
           onComplete();
         }
       }}
       style={{ scale }}
-      className="relative h-[68px] w-full overflow-hidden rounded-[22px] bg-[var(--pact)] text-[19px] font-extrabold text-[var(--pact-ink)] shadow-[0_14px_30px_-12px_var(--pact)] disabled:opacity-70"
+      className="relative h-[68px] w-full overflow-hidden rounded-[22px] bg-[var(--pact)] text-[19px] font-extrabold text-[var(--pact-ink)] shadow-[0_14px_30px_-12px_var(--pact)] disabled:opacity-50"
       aria-label={`${label}. Press and hold.`}
     >
       <motion.span aria-hidden className="absolute inset-y-0 left-0 bg-[var(--pact-deep)]" style={{ width }} />
