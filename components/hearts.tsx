@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useOptimistic, useRef, useState, useTransition, type PointerEvent, type ReactNode } from "react";
-import type { Checkin, Me, PactBundle } from "@/lib/data";
+import type { Checkin, Me, PactBundle, Reaction } from "@/lib/data";
 import { setHeart } from "@/lib/client-actions";
 import { firstName, listNames } from "@/lib/view";
 import { toast } from "./toast";
@@ -17,14 +17,15 @@ export function HeartIcon({ size = 14, className }: { size?: number; className?:
   );
 }
 
-/** two taps this close in time and space are a double-tap */
-const DOUBLE_MS = 350;
-const DOUBLE_PX = 30;
+/** taps this close in time and space belong to the same double- or triple-tap */
+const TAP_MS = 350;
+const TAP_PX = 30;
 
 /**
- * A row for a check-in that someone else can double-tap to send a heart. Deliberately unannounced:
- * there's no button, and people find it when a heart shows up on their own check-in.
- * `children` gets the "♥ You and Priya" line to place under the note.
+ * A row for a check-in that someone else can react to. Deliberately unannounced, with no buttons:
+ * a double-tap sends a heart, a triple-tap a fire. People find them when one shows up on their own check-in.
+ * One reaction per person: fire replaces a heart, a heart never replaces a fire.
+ * `children` gets the "♥ You and Priya  🔥 Sam" line to place under the note.
  */
 export function HeartRow({
   b,
@@ -40,70 +41,112 @@ export function HeartRow({
   className: string;
   children: (hearts: ReactNode) => ReactNode;
 }) {
-  const from = c ? b.hearts.filter((h) => h.checkin_id === c.id).map((h) => h.from_user) : [];
+  const reactions = c ? b.hearts.filter((h) => h.checkin_id === c.id) : [];
   const can = !!c && c.user_id !== me.id && b.members.some((m) => m.user_id === me.id);
-  const [mine, setMine] = useOptimistic(from.includes(me.id));
+  const [mine, setMine] = useOptimistic<Reaction | null>(reactions.find((h) => h.from_user === me.id)?.kind ?? null);
   const [, start] = useTransition();
-  const [bloom, setBloom] = useState(0);
-  const last = useRef<{ t: number; x: number; y: number } | null>(null);
+  const [bloom, setBloom] = useState<{ n: number; kind: Reaction }>({ n: 0, kind: "heart" });
+  const taps = useRef<{ t: number; x: number; y: number; count: number } | null>(null);
+  /** set by a triple-tap so the double-tap that came first doesn't also save a heart */
+  const fired = useRef(false);
   const reduce = useReducedMotion();
 
   const nameOf = (id: string) => firstName(b.allMembers.find((m) => m.user_id === id)?.name ?? "Someone");
   const owner = c ? nameOf(c.user_id) : "";
 
-  function send(on: boolean) {
-    if (!c) return;
-    start(async () => {
-      setMine(on);
-      const res = await setHeart({ pactId: b.pact.id, checkinId: c.id, on });
+  function save(on: boolean, kind: Reaction = "heart") {
+    if (!c) return Promise.resolve();
+    return setHeart({ pactId: b.pact.id, checkinId: c.id, on, kind }).then((res) => {
       if (!res.ok) toast(res.error, "error");
     });
   }
 
-  // like Instagram: a double-tap only ever adds; taking it back is a tap on your name
-  function love() {
-    setBloom((n) => n + 1);
+  function takeBack() {
+    start(async () => {
+      setMine(null);
+      await save(false);
+    });
+  }
+
+  // a heart waits out the triple-tap window before saving, so a fire never sends a heart first
+  function heart() {
+    setBloom((x) => ({ n: x.n + 1, kind: "heart" }));
     navigator.vibrate?.(10);
-    if (!mine) send(true);
+    if (mine) return;
+    fired.current = false;
+    start(async () => {
+      setMine("heart");
+      await new Promise((r) => setTimeout(r, TAP_MS));
+      if (!fired.current) await save(true, "heart");
+    });
+  }
+
+  function fire() {
+    fired.current = true;
+    setBloom((x) => ({ n: x.n + 1, kind: "fire" }));
+    navigator.vibrate?.([10, 40, 20]);
+    if (mine === "fire") return;
+    start(async () => {
+      setMine("fire");
+      await save(true, "fire");
+    });
   }
 
   function onPointerUp(e: PointerEvent<HTMLLIElement>) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     if ((e.target as HTMLElement).closest("button, a, input, textarea")) return;
-    const p = last.current;
-    if (p && e.timeStamp - p.t < DOUBLE_MS && Math.hypot(e.clientX - p.x, e.clientY - p.y) < DOUBLE_PX) {
-      last.current = null;
-      love();
-    } else {
-      last.current = { t: e.timeStamp, x: e.clientX, y: e.clientY };
-    }
+    const p = taps.current;
+    const chained = p && p.count < 3 && e.timeStamp - p.t < TAP_MS && Math.hypot(e.clientX - p.x, e.clientY - p.y) < TAP_PX;
+    const count = chained ? p.count + 1 : 1;
+    taps.current = { t: e.timeStamp, x: e.clientX, y: e.clientY, count };
+    if (count === 2) heart();
+    if (count === 3) fire();
   }
 
-  const names = [...(mine ? ["You"] : []), ...from.filter((u) => u !== me.id).map(nameOf)];
-  const text = listNames(names);
+  // everyone's reaction, with the viewer's (possibly still saving) one in place of what the server has
+  const others = reactions.filter((h) => h.from_user !== me.id);
+  const groups = (["heart", "fire"] as const)
+    .map((kind) => {
+      const names = [...(mine === kind ? ["You"] : []), ...others.filter((h) => h.kind === kind).map((h) => nameOf(h.from_user))];
+      return { kind, names, isMine: mine === kind };
+    })
+    .filter((g) => g.names.length > 0);
+
+  const icon = (kind: Reaction) =>
+    kind === "fire" ? (
+      <span aria-hidden className="text-[13px] leading-none">
+        🔥
+      </span>
+    ) : (
+      <HeartIcon className="text-rose" />
+    );
+
   const line = (
     <AnimatePresence initial={false}>
-      {names.length > 0 && (
+      {groups.length > 0 && (
         <motion.span
           key="hearts"
-          className="mt-1 flex"
+          className="mt-1 flex flex-wrap gap-x-3 gap-y-1"
           initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.7 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0 }}
           transition={{ type: "spring", stiffness: 500, damping: 22 }}
           style={{ transformOrigin: "left center" }}
         >
-          {mine ? (
-            <button type="button" onClick={() => send(false)} className="flex items-center gap-1 text-[13px] font-semibold text-ink-2">
-              <HeartIcon className="text-rose" />
-              {text}
-              <span className="sr-only">. Tap to take your heart back.</span>
-            </button>
-          ) : (
-            <span className="flex items-center gap-1 text-[13px] font-semibold text-ink-2">
-              <HeartIcon className="text-rose" />
-              {text}
-            </span>
+          {groups.map((g) =>
+            g.isMine ? (
+              <button key={g.kind} type="button" onClick={takeBack} className="flex items-center gap-1 text-[13px] font-semibold text-ink-2">
+                {icon(g.kind)}
+                {listNames(g.names)}
+                <span className="sr-only">{g.kind === "fire" ? " sent fire" : " sent a heart"}. Tap to take yours back.</span>
+              </button>
+            ) : (
+              <span key={g.kind} className="flex items-center gap-1 text-[13px] font-semibold text-ink-2">
+                {icon(g.kind)}
+                {listNames(g.names)}
+                <span className="sr-only">{g.kind === "fire" ? " sent fire" : " sent a heart"}</span>
+              </span>
+            ),
           )}
         </motion.span>
       )}
@@ -120,24 +163,34 @@ export function HeartRow({
       {can && !mine && (
         <button
           type="button"
-          onClick={love}
+          onClick={heart}
           className="sr-only focus-visible:not-sr-only focus-visible:absolute focus-visible:top-2 focus-visible:right-2 focus-visible:z-10 focus-visible:rounded-full focus-visible:bg-ink focus-visible:px-3 focus-visible:py-1.5 focus-visible:text-[13px] focus-visible:font-bold focus-visible:text-white"
         >
           Send {owner} a heart
         </button>
       )}
       <AnimatePresence>
-        {bloom > 0 && (
+        {bloom.n > 0 && (
           <motion.span
-            key={bloom}
+            key={bloom.n}
             aria-hidden
             className="pointer-events-none absolute inset-0 flex items-center justify-center text-rose"
             initial={{ opacity: 0, scale: reduce ? 1 : 0.2 }}
-            animate={reduce ? { opacity: [0, 1, 0] } : { opacity: [0, 1, 1, 0], scale: [0.2, 1.15, 1, 1.1], y: [0, 0, 0, -8] }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.9, times: reduce ? [0, 0.4, 1] : [0, 0.25, 0.7, 1], ease: "easeOut" }}
+            animate={
+              reduce
+                ? { opacity: [0, 1, 0] }
+                : bloom.kind === "fire"
+                  ? { opacity: [1, 1, 1, 0], scale: [0.8, 1.45, 1.15, 1.3], rotate: [0, -8, 6, 0], y: [0, 0, 0, -14] }
+                  : { opacity: [0, 1, 1, 0], scale: [0.2, 1.15, 1, 1.1], y: [0, 0, 0, -8] }
+            }
+            exit={{ opacity: 0, transition: { duration: 0.08 } }}
+            transition={{ duration: bloom.kind === "fire" ? 1 : 0.9, times: reduce ? [0, 0.4, 1] : [0, 0.25, 0.7, 1], ease: "easeOut" }}
           >
-            <HeartIcon size={76} className="drop-shadow-[0_4px_12px_rgba(242,69,127,0.35)]" />
+            {bloom.kind === "fire" ? (
+              <span className="text-[76px] leading-none drop-shadow-[0_6px_16px_rgba(255,91,58,0.45)]">🔥</span>
+            ) : (
+              <HeartIcon size={76} className="drop-shadow-[0_4px_12px_rgba(242,69,127,0.35)]" />
+            )}
           </motion.span>
         )}
       </AnimatePresence>

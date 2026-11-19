@@ -75,9 +75,13 @@ export interface Checkin {
   created_at: string;
 }
 
+export type Reaction = "heart" | "fire";
+
 export interface Heart {
   checkin_id: string;
   from_user: string;
+  /** a double-tap sends a heart, a triple-tap a fire */
+  kind: Reaction;
   created_at: string;
 }
 
@@ -157,7 +161,7 @@ export async function loadBundles(supabase: SupabaseClient, pactIds?: string | s
     scope(supabase.from("nudges").select("pact_id,from_user,to_user,day").gte("day", addDays(todayIn("UTC"), -2)), "pact_id"),
     // build pacts only need yesterday's calls; break pacts show every "I gave in" in their history
     fetchAll<Row>(() => scope(supabase.from("misses").select("pact_id,user_id,day"), "pact_id").order("day").order("user_id")),
-    fetchAll<Row>(() => scope(supabase.from("hearts").select("pact_id,checkin_id,from_user,created_at"), "pact_id").order("created_at").order("checkin_id").order("from_user")),
+    fetchAll<Row>(() => scope(supabase.from("hearts").select("pact_id,checkin_id,from_user,kind,created_at"), "pact_id").order("created_at").order("checkin_id").order("from_user")),
   ]);
   for (const r of [pacts, members, checkins, freezes, nudges, misses, hearts]) if (r.error) throw new Error(r.error.message);
 
@@ -191,7 +195,7 @@ export async function loadBundles(supabase: SupabaseClient, pactIds?: string | s
       misses: calls,
       hearts: (hearts.data as Row[])
         .filter((h) => h.pact_id === pact.id)
-        .map((h) => ({ checkin_id: h.checkin_id as string, from_user: h.from_user as string, created_at: h.created_at as string })),
+        .map((h) => ({ checkin_id: h.checkin_id as string, from_user: h.from_user as string, kind: h.kind === "fire" ? "fire" : "heart", created_at: h.created_at as string })),
       canAnswerToday: canAnswerToday(pact),
       state: computePactState(pact, ms, cs, fz, today, calls),
       today,
