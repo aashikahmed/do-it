@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PactBundle } from "./data";
 import { addDays, type Day } from "./dates";
 import { computePactState, type Cadence } from "./streak";
-import { breakTitle, chainCountsText, inviteText, isStarting, missOutcome, pactName, statusLine } from "./view";
+import { breakTitle, chainCountsText, inviteText, isStarting, lateOutcome, missOutcome, othersRiskingChain, pactName, pausingSoon, statusLine } from "./view";
 
 const A = "a";
 const B = "b";
@@ -185,5 +185,63 @@ describe("paused after 3 quiet days", () => {
   it("says what a miss would do", () => {
     expect(missOutcome(b, A)).toBe("One of your freezes covers it, so the streak keeps going. You'll have 2 left.");
     expect(missOutcome(b, B)).toBe("You're out of freezes, so you're paused and the chain carries on without you. Check in any day to jump back in.");
+  });
+});
+
+describe("the night before a pause", () => {
+  const ci = (user_id: string, day: string) => ({ id: `${user_id}${day}`, pact_id: "p", user_id, day, value: null, note: null, feel: null, made_up: false, created_at: "" });
+  // A kept every day and checked in today (the 10th); B checked in up to `bUntil`, and the 9th is still open
+  function night(bUntil: Day, freezes: number, aMissed9 = false) {
+    const b = bundle({ cadence: "daily", start: "2026-11-01", days: 30, today: "2026-11-10", bJoinedOn: "2026-11-01" });
+    if (aMissed9) b.checkins = b.checkins.filter((c) => c.day !== "2026-11-09") as never;
+    for (let d = "2026-11-01"; d <= bUntil; d = addDays(d, 1)) b.checkins.push(ci(B, d) as never);
+    b.checkins.push(ci(A, "2026-11-10") as never);
+    b.state = computePactState({ ...b.pact, freezes_allowed: freezes }, b.members, b.checkins, [], "2026-11-10");
+    return b;
+  }
+
+  it("third quiet day: nobody waits on them, and the line says why", () => {
+    const b = night("2026-11-06", 3);
+    expect(b.state.late?.start).toBe("2026-11-09");
+    expect(lateOutcome(b, B)).toBe("quiet");
+    expect(pausingSoon(b, B)).toBe(true);
+    expect(othersRiskingChain(b, A)).toEqual([]);
+    expect(statusLine(b, A)).toEqual({ text: "Done for today. Sam has been quiet for 3 days.", tone: "done" });
+  });
+
+  it("out of freezes: paused at midnight, and the chain is safe", () => {
+    const b = night("2026-11-08", 0);
+    expect(lateOutcome(b, B)).toBe("out");
+    expect(statusLine(b, A).text).toBe("Done for today. Sam is out of freezes.");
+  });
+
+  it("one missed day with freezes left: their freeze covers it, so only today is waited on", () => {
+    const b = night("2026-11-08", 3);
+    expect(lateOutcome(b, B)).toBe("freeze");
+    expect(pausingSoon(b, B)).toBe(false);
+    expect(othersRiskingChain(b, A)).toEqual([]);
+    expect(statusLine(b, A).text).toBe("Waiting on Sam");
+  });
+
+  it("nobody kept it and someone can't pay: the chain is at risk, so it's still waited on", () => {
+    const b = night("2026-11-08", 0, true);
+    expect(lateOutcome(b, A)).toBe("break");
+    expect(lateOutcome(b, B)).toBe("break");
+    expect(othersRiskingChain(b, A)).toEqual(["Sam"]);
+  });
+
+  it("already checked in today: no pause coming", () => {
+    const b = night("2026-11-08", 0);
+    b.checkins.push(ci(B, "2026-11-10") as never);
+    b.state = computePactState({ ...b.pact, freezes_allowed: 0 }, b.members, b.checkins, [], "2026-11-10");
+    expect(lateOutcome(b, B)).toBe("without");
+    expect(pausingSoon(b, B)).toBe(false);
+    expect(statusLine(b, A).text).toBe("Everyone's in today");
+  });
+
+  it("after midnight they're paused", () => {
+    const b = night("2026-11-06", 3);
+    const next = computePactState({ ...b.pact, freezes_allowed: 3 }, b.members, b.checkins, [], "2026-11-11");
+    expect(next.paused[B]).toEqual({ since: "2026-11-10", why: "quiet" });
   });
 });

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { PactBundle } from "@/lib/data";
-import { answerOn, didTheirPart, needsMe, owesMakeUp, progressText, statusLine, streakUnit } from "@/lib/view";
+import { answerOn, didTheirPart, isPaused, needsMe, owesMakeUp, pausingSoon, progressText, statusLine, streakUnit } from "@/lib/view";
 import { Avatar } from "./avatar";
 import { Chain, recentWindow } from "./chain";
 
@@ -56,6 +56,7 @@ export function PactCard({ b, me }: { b: PactBundle; me: string }) {
               size={30}
               ring="#fff"
               done={!ended && b.state.phase === "active" && (isBreak ? answerOn(b, m.user_id, b.today) === "yes" : didTheirPart(b, m.user_id))}
+              paused={b.state.phase !== "active" ? undefined : isPaused(b, m.user_id) ? "now" : m.user_id !== me && pausingSoon(b, m.user_id) ? "soon" : undefined}
             />
           ))}
         </div>

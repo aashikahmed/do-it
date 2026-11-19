@@ -1,6 +1,6 @@
 import type { PactBundle } from "./data";
 import { formatDay, diffDays, type Day } from "./dates";
-import { limitOn, planFreezes, type Cadence, type Kind } from "./streak";
+import { limitOn, planFreezes, type Cadence, type Kind, type LateOutcome } from "./streak";
 
 export function listNames(names: string[], max = 2) {
   if (names.length === 0) return "";
@@ -32,7 +32,37 @@ export function owesMakeUp(b: PactBundle, id: string) {
 
 /** first names of everyone else who still has to make up yesterday */
 export function othersOwingMakeUp(b: PactBundle, me: string) {
-  return (b.state.late?.owing ?? []).filter((u) => u !== me).map((u) => firstName(b.allMembers.find((m) => m.user_id === u)?.name ?? "Someone"));
+  return (b.state.late?.owing ?? []).filter((u) => u !== me).map((u) => nameOf(b, u));
+}
+
+function nameOf(b: Pick<PactBundle, "allMembers">, id: string) {
+  return firstName(b.allMembers.find((m) => m.user_id === id)?.name ?? "Someone");
+}
+
+/** what happens to someone who still owes yesterday if they don't make it up (a freeze covers it unless told otherwise) */
+export function lateOutcome(b: Pick<PactBundle, "state">, id: string): LateOutcome | null {
+  const late = b.state.late;
+  if (!late?.owing.includes(id)) return null;
+  return late.ifMissed[id] ?? "freeze";
+}
+
+/** about to be paused when yesterday closes: their 3rd quiet day, or out of freezes */
+export function pausingSoon(b: Pick<PactBundle, "state">, id: string) {
+  const o = lateOutcome(b, id);
+  return o === "quiet" || o === "out";
+}
+
+/**
+ * First names of everyone else whose missed yesterday would break the chain. Anyone else who owes it is covered
+ * either way (their own freeze, or a pause), so nobody waits on them.
+ */
+export function othersRiskingChain(b: PactBundle, me: string) {
+  return (b.state.late?.owing ?? []).filter((u) => u !== me && lateOutcome(b, u) === "break").map((u) => nameOf(b, u));
+}
+
+/** "3 quiet days" (daily) or "a quiet week" (weekly) */
+export function quietSpan(cadence: Cadence) {
+  return cadence === "daily" ? "3 quiet days" : "a quiet week";
 }
 
 const WEEKDAYS = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
@@ -202,18 +232,21 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
   }
   if (pact.kind === "break") {
     if (owesYesterdayAnswer(b, me)) return { text: "How did yesterday go?", tone: "act" };
-    if (state.late) return { text: `Waiting on ${listNames(othersOwingMakeUp(b, me))} to answer for yesterday`, tone: "wait" };
+    const risky = othersRiskingChain(b, me);
+    if (risky.length) return { text: `Waiting on ${listNames(risky)} to answer for yesterday`, tone: "wait" };
   }
   if (state.late) {
     const day = makeUpLabel(pact.cadence, state.late);
     if (owesMakeUp(b, me)) return { text: `${capitalize(day)} is still open. Make it up today.`, tone: "risk" };
-    return { text: `Waiting on ${listNames(othersOwingMakeUp(b, me))} to make up ${day}`, tone: "wait" };
+    const risky = othersRiskingChain(b, me);
+    if (risky.length) return { text: `Waiting on ${listNames(risky)} to make up ${day}`, tone: "wait" };
   }
   if (state.phase === "ended") {
     const unit = pact.cadence === "daily" ? "days" : "weeks";
     return { text: `${state.completion.done + state.periods.filter((p) => p.status === "frozen").length} of ${state.completion.total} ${unit} closed`, tone: "info" };
   }
-  if (state.repair) return { text: `Streak broke. A freeze can save it.`, tone: "risk" };
+  // with yesterday still open, the make-up card handles any older misses
+  if (state.repair && !state.late) return { text: `Streak broke. A freeze can save it.`, tone: "risk" };
   if (pact.kind === "break") return breakLine(b, me);
 
   const cur = state.current!;
@@ -221,7 +254,8 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
   const owes = (id: string) =>
     pact.cadence === "daily" ? !b.checkins.some((c) => c.user_id === id && c.day === b.today) : (cur.counts[id] ?? 0) < need;
   const iOwe = owes(me);
-  const othersOwing = others.filter((m) => cur.required.includes(m.user_id) && owes(m.user_id));
+  // someone being paused at midnight doesn't count toward today either way
+  const othersOwing = others.filter((m) => cur.required.includes(m.user_id) && owes(m.user_id) && !pausingSoon(b, m.user_id));
   const othersDone = others.filter((m) => !owes(m.user_id));
 
   if (isPaused(b, me)) {
@@ -246,10 +280,15 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
   // the chain is safe, but someone in the pact hasn't checked in even once, or is paused
   const notYet = others.filter((m) => !hasStarted(b, m.user_id) && owes(m.user_id));
   const away = others.filter((m) => isPaused(b, m.user_id) && owes(m.user_id));
-  if (notYet.length || away.length) {
+  const quiet = others.filter((m) => lateOutcome(b, m.user_id) === "quiet" && owes(m.user_id));
+  const out = others.filter((m) => lateOutcome(b, m.user_id) === "out" && owes(m.user_id));
+  if (notYet.length || away.length || quiet.length || out.length) {
+    const names = (xs: typeof others) => listNames(xs.map((m) => firstName(m.name)));
     const bits = [
-      notYet.length ? `${listNames(notYet.map((m) => firstName(m.name)))} ${notYet.length === 1 ? "hasn't" : "haven't"} started yet.` : "",
-      away.length ? `${listNames(away.map((m) => firstName(m.name)))} ${away.length === 1 ? "is" : "are"} paused.` : "",
+      notYet.length ? `${names(notYet)} ${notYet.length === 1 ? "hasn't" : "haven't"} started yet.` : "",
+      away.length ? `${names(away)} ${away.length === 1 ? "is" : "are"} paused.` : "",
+      quiet.length ? `${names(quiet)} ${quiet.length === 1 ? "has" : "have"} been quiet for ${pact.cadence === "daily" ? "3 days" : "a week"}.` : "",
+      out.length ? `${names(out)} ${out.length === 1 ? "is" : "are"} out of freezes.` : "",
     ].filter(Boolean);
     return { text: `${pact.cadence === "daily" ? "Done for today" : "Target hit this week"}. ${bits.join(" ")}`, tone: "done" };
   }
