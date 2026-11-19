@@ -46,6 +46,11 @@ function friendly(msg: string | undefined) {
     "You can only say so about today or yesterday",
     "Say what you're giving up",
     "Set a daily limit",
+    "You can change a day once it's over",
+    "This round can't be changed any more",
+    "Days off always count",
+    "You have no freezes left",
+    "Check the number and try again",
   ];
   const hit = known.find((k) => msg.includes(k));
   if (hit) return hit;
@@ -306,6 +311,48 @@ export async function undoCheckIn(input: { pactId: string; day: string }): Promi
   if (error) return fail(friendly(error.message));
   refresh();
   return { ok: true };
+}
+
+/**
+ * Change one of your own days from Activity: any day of the round that's over, until a week after it ends.
+ * did = I did it (break pacts: I stayed off it), otherwise I missed it (I gave in). freeze = cover a miss with one of
+ * your own freezes. The database checks the rules and keeps what the day said before. Quiet on purpose: no push.
+ */
+export async function setDay(input: {
+  pactId: string;
+  day: string;
+  did: boolean;
+  value?: number | null;
+  note?: string | null;
+  feel?: 1 | 2 | 3 | null;
+  freeze?: boolean;
+}): Promise<ActionResult<{ frozen: boolean }>> {
+  const parsed = z
+    .object({
+      pactId: uuid,
+      day,
+      did: z.boolean(),
+      value: z.number().min(0).max(999999).nullable().optional(),
+      note: z.string().trim().max(280).nullable().optional(),
+      feel: z.union([z.literal(1), z.literal(2), z.literal(3)]).nullable().optional(),
+      freeze: z.boolean().optional(),
+    })
+    .safeParse(input);
+  if (!parsed.success) return fail("Check the details and try again");
+  const v = parsed.data;
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("set_day", {
+    p_pact: v.pactId,
+    p_day: v.day,
+    p_did: v.did,
+    p_value: v.did ? (v.value ?? null) : null,
+    p_note: v.did ? v.note || null : null,
+    p_feel: v.did ? (v.feel ?? null) : null,
+    p_freeze: !!v.freeze,
+  });
+  if (error) return fail(friendly(error.message));
+  refresh();
+  return { ok: true, data: { frozen: !!(data as { frozen?: boolean } | null)?.frozen } };
 }
 
 // ───────────────────────── nudges & freezes ─────────────────────────
