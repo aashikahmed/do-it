@@ -26,16 +26,6 @@ Open questions:
 - How it shows: roster "Away until Sat", a distinct link on the chain, no reminders or nudges while away, a "welcome back" when it ends.
 - Rules go in `lib/streak.ts` and get mirrored in SQL (check-in window trigger, `period_required()`).
 
-### Log from a sheet instead of the dock
-Added 2026-11-19 · `shaping`
-
-The check-in dock on the pact page (value input, feel chips, hold button) is always open and covers the activity history. Shrink it to one row ("Log today", plus "Yesterday" while it's still open to log) that opens a sheet. The sheet has a Today / Yesterday switch, the input for the pact's measure, feel, note, and hold to check in. Demo: https://claude.ai/artifact/LtR35prAWcLbvMaG2bL8dU (private).
-
-Open questions:
-- Pacts with nothing to measure: keep hold to check in in the bar (one gesture), or send everything through the sheet for consistency?
-- Does the make-up card's button open this same sheet set to yesterday, replacing `MakeUpSheet`?
-- Break pacts: the same sheet for the evening question, with `YesterdayCard` staying as the morning prompt?
-
 ### Earn back a freeze
 Added 2026-11-19 · `idea`
 
@@ -64,4 +54,12 @@ Things we decided not to do yet during other work. None yet.
 
 ## Shipped or dropped
 
-None yet.
+### Log from a sheet instead of the dock
+Added 2026-11-19 · `shipped` in [#21](https://github.com/aashikahmed/do-it/pull/21)
+
+The check-in dock on the pact page covered the activity history. The bar is now one row ("Log today", plus "Yesterday" while it's still open), and the input lives in a sheet with a Today / Yesterday switch.
+
+Decided:
+- Pacts with nothing to measure keep hold to check in in the bar, with "Add details" to open the sheet.
+- The make-up card opens the same sheet set to yesterday; `MakeUpSheet` is gone.
+- Break pacts ask today's question in a sheet from a "How did today go?" button; `YesterdayCard` stays as the morning prompt.
