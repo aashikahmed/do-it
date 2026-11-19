@@ -19,6 +19,7 @@ const KINDS: [string, string][] = [
   ["makeup", "Morning make-up reminders"],
   ["break_morning", "Break-pact mornings"],
   ["finished", "“You finished”"],
+  ["paused", "Pause notices"],
 ];
 
 async function Health() {

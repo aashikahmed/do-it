@@ -58,11 +58,6 @@ export interface MissCore {
 }
 
 /**
- * late = ended yesterday, not closed yet, but still fixable today: everyone short of it is short by
- * exactly one check-in, hasn't logged yesterday, and hasn't called it a miss. It doesn't break the
- * streak until midnight. Mirrors checkins_guard() in SQL, which allows logging yesterday until then.
- */
-/**
  * A freeze spent on a period. Everyone has their own freezes: `paid_by` is whose allowance it used, `covers` whose
  * miss it covered (they differ when someone gave one of theirs). Old rows from shared freezes have no `covers`.
  */
@@ -72,6 +67,13 @@ export interface FreezeCore {
   covers?: string | null;
 }
 
+/**
+ * late = ended yesterday, not closed yet, but still fixable today: everyone short of it is short by
+ * exactly one check-in, hasn't logged yesterday, and hasn't called it a miss. It doesn't break the
+ * streak until midnight. Mirrors checkins_guard() in SQL, which allows logging yesterday until then.
+ * Once a miss is past that window, each person who missed uses one of their own freezes, automatically. Out of
+ * freezes, they're paused and the period counts without them. It's only "missed" when nobody kept it.
+ */
 export type PeriodStatus = "done" | "frozen" | "late" | "missed" | "open" | "upcoming";
 
 export interface Period {
@@ -91,9 +93,14 @@ export interface Period {
   rest: boolean;
   /** break pacts: days each member gave in during this period */
   slips: Record<string, number>;
-  /** whose miss a freeze would have to cover: short of the target once it's over, or over the allowance already */
+  /** whose miss a freeze would still have to cover (only on a missed or late period; the rest is settled) */
   culprits: string[];
+  /** missed it with no freezes left, so they're paused and the period counts without them */
+  paused: string[];
 }
+
+/** why someone is paused: 3 quiet days in a row (1 silent week), or a miss with no freezes left */
+export type PauseReason = "quiet" | "out";
 
 export type Phase = "upcoming" | "active" | "ended";
 
@@ -125,6 +132,10 @@ export interface PactState {
    * check-in, so someone who joins and never shows up can't break the chain. Mirrors period_required() in SQL.
    */
   countsFrom: Record<string, Day | null>;
+  /** members the chain has paused right now: since when, and why. They count again from their next check-in. */
+  paused: Record<string, { since: Day; why: PauseReason }>;
+  /** freezes the rules have spent on their own and that aren't stored yet (the cron writes them down) */
+  autoFreezes: { period: Day; covers: string }[];
 }
 
 export function periodLength(p: Pick<PactCore, "cadence">) {
@@ -155,12 +166,10 @@ export function computePactState(
   misses: MissCore[] = [],
 ): PactState {
   const fz: FreezeCore[] = freezes.map((f) => (typeof f === "string" ? { period_start: f } : f));
-  const frozenStarts = fz.map((f) => f.period_start);
   const len = periodLength(pact);
   const need = pact.cadence === "daily" ? 1 : pact.times_per_week;
   const endDate = pactEndDate(pact);
   const total = Math.ceil(pact.duration_days / len);
-  const frozen = new Set(frozenStarts);
   const isBreak = pact.kind === "break";
 
   const memberIds = new Set(members.map((m) => m.user_id));
@@ -170,6 +179,8 @@ export function computePactState(
   const seen = new Set<string>();
   // first check-in that counts, per member: that's when they've started
   const firstIn: Record<string, Day> = {};
+  // every check-in day that counts, per member: a paused member comes back with the first one after the pause
+  const daysIn: Record<string, Day[]> = {};
   for (const c of checkins) {
     if (!memberIds.has(c.user_id)) continue;
     const key = `${c.user_id}|${c.day}`;
@@ -184,7 +195,9 @@ export function computePactState(
     buckets[idx][c.user_id] = (buckets[idx][c.user_id] ?? 0) + 1;
     if (c.made_up) madeUp.add(idx);
     if (!firstIn[c.user_id] || c.day < firstIn[c.user_id]) firstIn[c.user_id] = c.day;
+    (daysIn[c.user_id] ??= []).push(c.day);
   }
+  for (const u in daysIn) daysIn[u].sort();
   const yesterday = addDays(today, -1);
   const calledMiss = new Set(misses.filter((m) => m.day === yesterday).map((m) => m.user_id));
   // break pacts: every "I gave in" uses up one of the days a period allows
@@ -204,7 +217,9 @@ export function computePactState(
 
   // you count from the first period that starts on or after your first check-in (and not before you joined)
   const countsFrom: Record<string, Day | null> = {};
+  const joined: Record<string, Day> = {};
   for (const m of members) {
+    joined[m.user_id] = m.joined_on;
     const first = firstIn[m.user_id];
     if (!first) countsFrom[m.user_id] = null;
     else {
@@ -213,18 +228,45 @@ export function computePactState(
     }
   }
 
+  // everyone's own freezes: stored ones (a row per person covered; old shared rows cover the whole period)
+  const rowCovers = new Set(fz.filter((f) => f.covers).map((f) => `${f.period_start}|${f.covers}`));
+  const wholeFrozen = new Set(fz.filter((f) => !f.covers).map((f) => f.period_start));
+  const left: Record<string, number> = {};
+  for (const m of members) left[m.user_id] = Math.max(0, pact.freezes_allowed - fz.filter((f) => f.paid_by === m.user_id).length);
+  const autoFreezes: { period: Day; covers: string }[] = [];
+  // paused members, and how many quiet periods in a row each counted member has had
+  const pause: Record<string, { since: Day; after: Day; why: PauseReason } | null> = {};
+  const quiet: Record<string, number> = {};
+  const quietLimit = pact.cadence === "daily" ? 3 : 1;
+
   const periods: Period[] = [];
   for (let i = 0; i < total; i++) {
     const start = addDays(pact.start_date, i * len);
     const rawEnd = addDays(start, len - 1);
     const end = rawEnd > endDate ? endDate : rawEnd;
     const counts = buckets[i];
-    const inPact = members.filter((m) => isRequired(m, start));
-    let required = inPact.filter((m) => countsFrom[m.user_id] !== null && countsFrom[m.user_id]! <= start).map((m) => m.user_id);
+    const inPact = members.filter((m) => isRequired(m, start)).map((m) => m.user_id);
+    // back from a pause: the first check-in after it counts them again, the same way a first check-in does
+    for (const u of inPact) {
+      const p = pause[u];
+      if (!p) continue;
+      const d = daysIn[u]?.find((x) => x > p.after);
+      if (!d) continue;
+      const back = periodOnOrAfter(pact, d) > joined[u] ? periodOnOrAfter(pact, d) : joined[u];
+      if (back <= start) {
+        pause[u] = null;
+        countsFrom[u] = back;
+        quiet[u] = 0;
+      }
+    }
+    const started = inPact.filter((u) => countsFrom[u] !== null && countsFrom[u]! <= start);
+    let required = started.filter((u) => !pause[u]);
     // nobody has started yet (the first days of a pact): whoever checked in during this period counts, else everyone
-    if (required.length === 0) {
-      const showedUp = inPact.filter((m) => (counts[m.user_id] ?? 0) > 0).map((m) => m.user_id);
-      required = showedUp.length ? showedUp : inPact.map((m) => m.user_id);
+    let untouched = false;
+    if (started.length === 0) {
+      const showedUp = inPact.filter((u) => (counts[u] ?? 0) > 0);
+      required = showedUp.length ? showedUp : inPact;
+      untouched = !showedUp.length;
     }
     const slips = slipBuckets[i];
     const rest = isRestDay(pact, start);
@@ -233,21 +275,92 @@ export function computePactState(
     const periodNeed = Math.min(need, days);
     const owing = rest ? [] : required.filter((u) => (counts[u] ?? 0) < periodNeed);
     const complete = rest || (required.length > 0 && owing.length === 0);
+    const over = (u: string) => (slips[u] ?? 0) > days - periodNeed;
     // break pacts: someone gave in more often than the period allows, so it's lost before it ends
-    const broken = !complete && required.some((u) => (slips[u] ?? 0) > days - periodNeed);
+    const broken = !complete && required.some(over);
+    const ended = end < today;
+    // who let it down: short of the target once it's over, or (a break pact lost early) over the days allowed
+    const missedBy = rest || complete ? [] : ended ? owing : required.filter(over);
+    const keeping = required.filter((u) => !missedBy.includes(u));
+    const hasFreeze = (u: string) => wholeFrozen.has(start) || rowCovers.has(`${start}|${u}`);
+
     let status: PeriodStatus;
+    let culprits: string[] = [];
+    const pausedHere: string[] = [];
     if (start > today) status = "upcoming";
-    else if (end < today) {
+    else if (complete) status = "done";
+    else {
       const fixable =
+        ended &&
         end === yesterday &&
         required.length > 0 &&
         !broken &&
         owing.every((u) => (counts[u] ?? 0) === periodNeed - 1 && !seen.has(`${u}|${yesterday}`) && !calledMiss.has(u));
-      status = complete ? "done" : frozen.has(start) ? "frozen" : fixable ? "late" : "missed";
-    } else status = complete ? "done" : broken ? (frozen.has(start) ? "frozen" : "missed") : "open";
-    // over: short of the target. still running (a break pact lost early): whoever went over the allowance
-    const culprits = rest || complete ? [] : end < today ? owing : required.filter((u) => (slips[u] ?? 0) > days - periodNeed);
-    periods.push({ index: i, start, end, status, required, counts, owing, madeUp: complete && madeUp.has(i), rest, slips, culprits });
+      if (ended ? fixable : !broken) {
+        // still open, or yesterday that can still be made up; a freeze already spent on it holds
+        const allFrozen = missedBy.length > 0 && missedBy.every(hasFreeze);
+        status = ended ? (allFrozen ? "frozen" : "late") : "open";
+        if (status === "late") culprits = missedBy.filter((u) => !hasFreeze(u));
+      } else {
+        // past the make-up window: everyone who missed uses their own freeze, or is paused if they're out
+        const auto: string[] = [];
+        const nobody: string[] = [];
+        for (const u of missedBy) {
+          if (hasFreeze(u)) continue;
+          if ((left[u] ?? 0) > 0) {
+            left[u]--;
+            auto.push(u);
+          } else if (keeping.length > 0) pausedHere.push(u);
+          else nobody.push(u);
+        }
+        if (nobody.length || untouched) {
+          // nobody kept it and someone can't pay (or nobody has ever checked in): it's missed, and no freezes are
+          // spent on it automatically
+          for (const u of auto) left[u]++;
+          pausedHere.length = 0;
+          status = "missed";
+          culprits = missedBy.filter((u) => !hasFreeze(u));
+        } else {
+          const stillOwing = owing.filter((u) => !missedBy.includes(u));
+          // a break pact lost early and the one who gave in is paused: today is still open for everyone else
+          if (missedBy.every((u) => pausedHere.includes(u))) status = !ended && stillOwing.length ? "open" : "done";
+          else status = "frozen";
+          for (const u of auto) autoFreezes.push({ period: start, covers: u });
+          for (const u of pausedHere) pause[u] = { since: start, after: end, why: "out" };
+        }
+      }
+    }
+
+    // quiet periods in a row: 3 days (or 1 silent week) and you're paused from the next one, while someone keeps it
+    if (ended && !rest && status !== "late" && status !== "upcoming") {
+      for (const u of required) {
+        if (pausedHere.includes(u)) {
+          quiet[u] = 0;
+          continue;
+        }
+        quiet[u] = (counts[u] ?? 0) === 0 ? (quiet[u] ?? 0) + 1 : 0;
+        if (quiet[u] >= quietLimit && keeping.length > 0 && i + 1 < total) {
+          pause[u] = { since: addDays(start, len), after: end, why: "quiet" };
+          quiet[u] = 0;
+        }
+      }
+    }
+
+    const counted = required.filter((u) => !pausedHere.includes(u));
+    periods.push({
+      index: i,
+      start,
+      end,
+      status,
+      required: counted,
+      counts,
+      owing: owing.filter((u) => !pausedHere.includes(u)),
+      madeUp: complete && madeUp.has(i),
+      rest,
+      slips,
+      culprits,
+      paused: [...pausedHere],
+    });
   }
 
   const phase: Phase = today < pact.start_date ? "upcoming" : today > endDate ? "ended" : "active";
@@ -279,12 +392,14 @@ export function computePactState(
     else if (p.status === "upcoming") break;
   }
 
-  const freezesUsed = fz.length;
+  const freezesUsed = fz.length + autoFreezes.length;
   const freezesLeftBy: Record<string, number> = {};
+  const paused: PactState["paused"] = {};
   for (const m of members) {
     if (m.left_on && m.left_on <= today) continue;
-    const spent = fz.filter((f) => f.paid_by === m.user_id).length;
-    freezesLeftBy[m.user_id] = Math.max(0, pact.freezes_allowed - spent);
+    freezesLeftBy[m.user_id] = left[m.user_id];
+    const p = pause[m.user_id];
+    if (p && p.since <= today) paused[m.user_id] = { since: p.since, why: p.why };
   }
 
   let repair: PactState["repair"] = null;
@@ -335,6 +450,8 @@ export function computePactState(
       total,
     },
     countsFrom,
+    paused,
+    autoFreezes,
   };
 }
 

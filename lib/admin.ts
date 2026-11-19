@@ -311,6 +311,8 @@ function memberToday(b: PactBundle, m: Member): { text: string; tone: Tone } {
   const cur = s.current;
   if (!cur) return { text: "", tone: "off" };
   if (!cur.required.includes(m.user_id)) {
+    const paused = b.state.paused[m.user_id];
+    if (paused) return { text: paused.why === "out" ? "Paused, out of freezes" : "Paused, quiet", tone: "off" };
     if (!b.state.countsFrom[m.user_id]) return { text: "Hasn't started", tone: "off" };
     return { text: b.pact.cadence === "daily" ? "Counts from tomorrow" : "Counts from next week", tone: "off" };
   }
@@ -414,7 +416,9 @@ export async function getActivity() {
     const text =
       f.covers && f.paid_by && f.paid_by !== f.covers
         ? `${who(f.paid_by)} gave ${who(f.covers)} a freeze for ${what}`
-        : f.covers && f.covers !== f.used_by
+        : f.covers && !f.used_by
+          ? `${who(f.covers)}'s freeze covered ${what} automatically`
+          : f.covers && f.covers !== f.used_by
           ? `${who(f.used_by)} used ${who(f.covers)}'s freeze for ${what}`
           : `${who(f.used_by)} froze ${what}`;
     ev.push({ key: `f${f.pact_id}${f.period_start}${f.covers ?? ""}`, kind: "freeze", at: f.created_at, text: text, pactId: f.pact_id, pact: label(f.pact_id) });

@@ -357,8 +357,8 @@ export async function setDay(input: {
 
 // ───────────────────────── nudges & freezes ─────────────────────────
 
-/** about: "today" (still on for today?), "yesterday" (make it up / answer for it), "start" (just joined, get going) */
-export async function nudge(input: { pactId: string; toUser: string; about?: "today" | "yesterday" | "start" }): Promise<ActionResult> {
+/** about: "today" (still on for today?), "yesterday" (make it up / answer for it), "start" (just joined, get going), "back" (paused, come back) */
+export async function nudge(input: { pactId: string; toUser: string; about?: "today" | "yesterday" | "start" | "back" }): Promise<ActionResult> {
   if (!uuid.safeParse(input.pactId).success || !uuid.safeParse(input.toUser).success) return fail("Can't nudge right now");
   const { supabase, userId } = await requireUser();
   if (input.toUser === userId) return fail("You can't nudge yourself");
@@ -379,6 +379,8 @@ export async function nudge(input: { pactId: string; toUser: string; about?: "to
       ? `${pact.emoji} ${pact.title}. There's still time to make up yesterday.`
       : input.about === "start"
       ? `${pact.emoji} ${pact.title}. You're in. Check in today to get going.`
+      : input.about === "back"
+      ? `${pact.emoji} ${pact.title}. Check in today and you're back in the chain.`
       : `${pact.emoji} ${pact.title}. Still on for today?`;
   after(async () => {
     const [name, { data: them }] = await Promise.all([
@@ -435,7 +437,11 @@ export async function applyFreeze(pactId: string, which: "all" | "older" = "all"
   const plan = planFreezes(bundle.state, periods, userId);
   if (!plan.ok) return fail("No freezes left");
   // one transaction in SQL: validates every period really was missed, pays the same way, all or nothing
-  const { error } = await supabase.rpc("use_freezes", { p_pact: pactId, p_periods: periods });
+  const { error } = await supabase.rpc("use_freezes", {
+    p_pact: pactId,
+    p_periods: plan.payments.map((p) => p.period),
+    p_covers: plan.payments.map((p) => p.covers),
+  });
   if (error) return fail(friendly(error.message));
   // break pacts: no pushes about the habit; partners see the frozen link next time they look
   if (bundle.pact.kind !== "break") after(async () => {
@@ -480,8 +486,13 @@ export async function callMiss(pactId: string, opts: { when?: "today" | "yesterd
     if (opts.freeze) {
       const fresh = await getPactForUser(supabase, pactId);
       const repair = fresh?.state.repair;
-      if (repair && planFreezes(fresh.state, repair.periods, userId).ok) {
-        const { error: fe } = await supabase.rpc("use_freezes", { p_pact: pactId, p_periods: repair.periods });
+      const plan = repair ? planFreezes(fresh.state, repair.periods, userId) : null;
+      if (plan?.ok && plan.payments.length) {
+        const { error: fe } = await supabase.rpc("use_freezes", {
+          p_pact: pactId,
+          p_periods: plan.payments.map((p) => p.period),
+          p_covers: plan.payments.map((p) => p.covers),
+        });
         if (fe) return fail(friendly(fe.message));
         frozen = true;
       }

@@ -27,7 +27,9 @@ import {
   freezeOffer,
   myFreezes,
   firstName,
+  isPaused,
   isStarting,
+  missOutcome,
   listNames,
   makeUpLabel,
   othersOwingMakeUp,
@@ -253,9 +255,11 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
           const owesLate = isBreak ? owesYesterdayAnswer(b, m.user_id) : owesMakeUp(b, m.user_id);
           // break pacts only nudge about yesterday; build pacts nudge anyone who hasn't done their part, new joiners too
           const canNudge = !isMe && (state.phase === "active" || owesLate) && (isBreak ? owesLate : !done || owesLate);
-          const about = owesLate ? "yesterday" : starting ? "start" : "today";
+          const paused = isPaused(b, m.user_id);
+          const about = owesLate ? "yesterday" : paused ? "back" : starting ? "start" : "today";
           let status: string;
           if (state.phase === "upcoming") status = isMe ? "Ready" : `Joined ${formatDay(m.joined_at.slice(0, 10), { day: "numeric", month: "short" })}`;
+          else if (paused && !todays) status = state.paused[m.user_id].why === "out" ? "Paused, out of freezes" : `Paused after ${pact.cadence === "daily" ? "3 quiet days" : "a quiet week"}`;
           else if (starting && (isBreak ? answerOn(b, m.user_id, b.today) === null : !todays && count === 0))
             status = m.joined_at.slice(0, 10) < addDays(b.today, -1) ? "Hasn't started yet" : "Just joined";
           else if (isBreak) status = breakStatus(b, m.user_id, todays);
@@ -283,7 +287,7 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
                     <p className={`truncate text-[15px] ${done ? "font-semibold text-ink" : "text-ink-2"}`}>{status}</p>
                     {starting && (
                       <p className="text-[14px] font-semibold text-ink-2">
-                        {canNudge ? "Get them going. " : ""}
+                        {canNudge ? (paused ? "Bring them back. " : "Get them going. ") : ""}
                         {chainCountsText(b, m.user_id, isMe ? "you" : "them")}
                       </p>
                     )}
@@ -339,7 +343,7 @@ function startValue(b: PactBundle, me: string) {
 }
 
 /** what a nudge is about: today, making up (or answering for) yesterday, or getting someone who just joined going */
-type NudgeAbout = "today" | "yesterday" | "start";
+type NudgeAbout = "today" | "yesterday" | "start" | "back";
 
 /**
  * Opens WhatsApp with a ready-made nudge; the sender picks the contact there.
@@ -357,6 +361,8 @@ function WhatsAppNudge({ b, me, toUser, name, about }: { b: PactBundle; me: Me; 
       ? `How did yesterday go, ${name}? You can answer until ${until}.`
       : about === "yesterday"
       ? `There's still time to make up ${day}, ${name}. The chain breaks at ${until}.`
+      : about === "back"
+      ? `We miss you in the chain, ${name}. Check in today and you're back in.`
       : about === "start"
       ? `Glad you're in, ${name}. Check in today to get going. ${chainCountsText(b, toUser, "you")}.`
       : iDidIt
@@ -738,7 +744,12 @@ function MakeUpCard({ b, me, onCelebrate }: { b: PactBundle; me: string; onCeleb
   const all = state.repair ? freezeOffer(b, me, state.repair.periods) : null;
   const olderOffer = freezeOffer(b, me, older);
   const n = b.members.length;
-  const breaks = n === 1 ? "After that the chain breaks." : n === 2 ? "After that the chain breaks for both of you." : "After that the chain breaks for everyone.";
+  const breaks =
+    myFreezes(b, me) > 0
+      ? "After that it uses one of your freezes."
+      : n > 1
+        ? "After that you're paused until you check in again."
+        : "After that the chain breaks.";
 
   async function freeze(which: "all" | "older") {
     setBusy(true);
@@ -782,102 +793,39 @@ function MakeUpCard({ b, me, onCelebrate }: { b: PactBundle; me: string; onCeleb
             I missed it
           </button>
         </div>
-      ) : (
-        all?.ok &&
-        older.length === 0 && (
-          <div className="mt-4">
-            <button disabled={busy} onClick={() => freeze("all")} className="h-11 rounded-full bg-ink/[0.07] px-4 text-[15px] font-bold text-ink disabled:opacity-50">
-              {busy ? "Freezing…" : `${all.button} instead`}
-            </button>
-            <p className="mt-1.5 text-[14px] leading-snug text-ink-2">{all.note}</p>
-          </div>
-        )
-      )}
+      ) : null}
       <LogSheet b={b} me={me} ctl={log} onCelebrate={onCelebrate} />
       <MissSheet b={b} me={me} open={missOpen} onClose={() => setMissOpen(false)} />
     </motion.section>
   );
 }
 
-/** "I missed it": spend a freeze, or let the link break now (partners are told, and can still freeze it). */
+/** "I missed it": settles it now. Your own freeze covers it, or you're paused (see missOutcome). */
 function MissSheet({ b, me, open, onClose }: { b: PactBundle; me: string; open: boolean; onClose: () => void }) {
   const { pact, state } = b;
   const late = state.late;
-  const repair = state.repair;
-  const offer = repair ? freezeOffer(b, me, repair.periods) : null;
-  const canFreeze = !!offer?.ok;
-  const [pick, setPick] = useState<"freeze" | "break">(canFreeze ? "freeze" : "break");
   const [busy, setBusy] = useState(false);
   const router = useRouter();
   const label = late ? makeUpLabel(pact.cadence, late) : "yesterday";
-  const unit = pact.cadence === "daily" ? "day" : "week";
   const others = b.members.filter((m) => m.user_id !== me).map((m) => firstName(m.name));
-  const nf = offer?.n ?? 1;
-  const choice = canFreeze ? pick : "break";
+  const left = myFreezes(b, me);
 
   async function go() {
     setBusy(true);
-    const res = choice === "freeze" ? await applyFreeze(pact.id, "all") : await callMiss(pact.id);
+    const res = await callMiss(pact.id);
     setBusy(false);
     if (!res.ok) return toast(res.error, "error");
     onClose();
-    toast(choice === "freeze" ? "🧊 Streak saved" : pact.cadence === "daily" ? "Starting again today" : "Starting again this week");
+    toast(left > 0 ? "🧊 Covered with a freeze" : others.length ? "You're paused for now" : "Starting again today");
     router.refresh();
   }
 
-  const options = [
-    {
-      k: "freeze" as const,
-      title: `🧊 Use ${nf === 1 ? "a freeze" : `${nf} freezes`} (${myFreezes(b, me)} left)`,
-      sub: `Keeps your ${repair?.previous ?? 0}-${unit} streak. ${offer?.note ?? ""}`.trim(),
-    },
-    {
-      k: "break" as const,
-      title: "Let it break",
-      sub: `The streak starts again ${pact.cadence === "daily" ? "today" : "this week"}. Your best stays ${state.best}.`,
-    },
-  ];
-
   return (
     <Sheet open={open} onClose={onClose} title={`${capitalize(label)} was a miss`}>
-      {canFreeze ? (
-        <>
-          <p className="mb-4 text-[16px] text-ink-2">What should happen to the chain?</p>
-          <div role="radiogroup" aria-label="What happens to the chain" className="space-y-2">
-            {options.map((o) => (
-              <button
-                key={o.k}
-                role="radio"
-                aria-checked={pick === o.k}
-                onClick={() => setPick(o.k)}
-                className={`flex w-full items-start gap-3 rounded-2xl border-2 p-4 text-left transition-colors ${pick === o.k ? "border-[var(--pact)] bg-[var(--pact-soft)]" : "border-line"}`}
-              >
-                <span className={`mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 ${pick === o.k ? "border-[6px] border-[var(--pact)]" : "border-ink-3"}`} aria-hidden />
-                <span>
-                  <span className="block text-[16px] font-bold">{o.title}</span>
-                  <span className="block text-[14px] text-ink-2">{o.sub}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </>
-      ) : (
-        <p className="text-[16px] text-ink-2">
-          {repair
-            ? `You're out of freezes, so the chain breaks unless someone gives you one today.`
-            : myFreezes(b, me) === 0
-              ? "There are no freezes left, so the chain breaks."
-              : "There's no streak to save yet, so the chain just starts again."}{" "}
-          Your best stays {state.best}.
-        </p>
-      )}
-      {choice === "break" && others.length > 0 && (
-        <p className="mt-3 text-[14px] text-ink-2">
-          {listNames(others)} will know you called it{repair ? ", and can still save it with a freeze today" : ""}.
-        </p>
-      )}
+      <p className="text-[16px] leading-snug text-ink-2">{missOutcome(b, me)}</p>
+      {others.length > 0 && <p className="mt-3 text-[14px] text-ink-2">{listNames(others)} will know you called it.</p>}
       <button disabled={busy} onClick={go} className="mt-4 h-14 w-full rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-50">
-        {busy ? "Saving…" : choice === "freeze" ? `Use ${nf === 1 ? "a freeze" : `${nf} freezes`}` : "Let it break"}
+        {busy ? "Saving…" : "OK, it was a miss"}
       </button>
     </Sheet>
   );
@@ -1203,25 +1151,18 @@ function GiveInSheet({ b, me, when, over, open, onClose }: { b: PactBundle; me: 
   // weekly: the week only breaks once the days it allows run out
   const breaks = !weekly || (period?.status !== "done" && used + 1 > allowed);
   const others = b.members.filter((m) => m.user_id !== me).map((m) => firstName(m.name));
-  const late = state.late?.start;
-  // the older lost days get paid for first (their own freezes, or gifts from you), then this one from yours
-  const olderOffer = freezeOffer(b, me, state.repair?.periods.filter((p) => p !== late && p !== period?.start) ?? []);
-  const mineAfter = myFreezes(b, me) - olderOffer.payments.filter((p) => p.paidBy === me).length;
-  const needed = 1 + olderOffer.n;
-  const saved = state.streak > 0 || (state.repair?.previous ?? 0) > 0;
-  const canFreeze = breaks && saved && olderOffer.ok && mineAfter > 0;
   const [busy, setBusy] = useState(false);
   const router = useRouter();
   const which = when === "today" ? "Today" : formatDay(day, { weekday: "long" });
   const unit = weekly ? "This week" : which;
 
-  async function go(freeze: boolean) {
+  async function go() {
     setBusy(true);
-    const res = await callMiss(pact.id, { when, freeze });
+    const res = await callMiss(pact.id, { when });
     setBusy(false);
     if (!res.ok) return toast(res.error, "error");
     onClose();
-    toast(res.data?.frozen ? "🧊 Streak saved" : breaks ? "Back at it tomorrow" : "Noted");
+    toast(!breaks ? "Noted" : myFreezes(b, me) > 0 ? "🧊 Covered with a freeze" : "Back at it tomorrow");
     router.refresh();
   }
 
@@ -1231,9 +1172,7 @@ function GiveInSheet({ b, me, when, over, open, onClose }: { b: PactBundle; me: 
         {over !== null && `${formatValue(pact, over)} is more than ${formatValue(pact, limitOn(pact, day) ?? 0)}. `}
         {!breaks
           ? `That uses one of your ${allowed} ${subjectOf(pact)} days this week. ${allowed - used - 1 > 0 ? `${allowed - used - 1} left.` : "That was the last one."}`
-          : saved
-            ? `${unit} won't count, and the streak breaks${b.members.length > 1 ? (b.members.length === 2 ? " for both of you" : " for everyone") : ""}.${canFreeze ? ` A freeze keeps it going. You have ${myFreezes(b, me)} left.` : ""}`
-            : `${unit} won't count. ${weekly ? "Next week" : "Tomorrow"} is a fresh start.`}
+          : `${unit} won't count for you. ${missOutcome(b, me)}`}
       </p>
       {others.length > 0 && (
         <p className="mt-3 rounded-2xl bg-mist p-3 text-[14px] text-ink-2">
@@ -1241,20 +1180,9 @@ function GiveInSheet({ b, me, when, over, open, onClose }: { b: PactBundle; me: 
         </p>
       )}
       <div className="mt-4 grid gap-2">
-        {canFreeze ? (
-          <>
-            <button disabled={busy} onClick={() => go(true)} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-50">
-              {busy ? "Saving…" : needed === 1 ? "🧊 Use a freeze" : `🧊 Use ${needed} freezes`}
-            </button>
-            <button disabled={busy} onClick={() => go(false)} className="h-14 rounded-2xl bg-mist text-[17px] font-bold disabled:opacity-50">
-              Not this time
-            </button>
-          </>
-        ) : (
-          <button disabled={busy} onClick={() => go(false)} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-50">
-            {busy ? "Saving…" : "OK"}
-          </button>
-        )}
+        <button disabled={busy} onClick={go} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-50">
+          {busy ? "Saving…" : "OK"}
+        </button>
       </div>
     </Sheet>
   );
@@ -1610,8 +1538,8 @@ function MenuSheet({ b, me, open, onClose }: { b: PactBundle; me: Me; open: bool
       {b.pact.kind === "break" && <CravingPlanEditor b={b} me={me} />}
       <p className="mt-5 text-[14px] leading-snug text-ink-2">
         {b.pact.kind === "break"
-          ? "Each day closes a link when everyone says they stayed off it. You can answer until midnight the next day. If anyone gives in, the chain breaks for the whole group, unless a freeze saves it. Everyone has their own freezes, and can give one to someone who's out. You only count once you've said yes for a day. Notifications only come in the morning, and never say what the pact is about."
-          : "The chain closes a link when everyone checks in. Miss a day and you can still make it up the next day, until midnight, or use a freeze then. Everyone has their own freezes, and can give one to someone who's out. Otherwise the chain breaks for the whole group. Nobody counts until their first check-in, so someone who never starts can't break it."}
+          ? "Each day closes a link when everyone says they stayed off it. You can answer until midnight the next day. If you give in, one of your own freezes covers it automatically. Out of freezes, or quiet for 3 days, and you're paused: the chain carries on without you until your next yes. You only count once you've said yes for a day. Notifications only come in the morning, and never say what the pact is about."
+          : "The chain closes a link when everyone checks in. Miss a day and you can make it up the next day, until midnight. After that one of your own freezes covers it, automatically. Out of freezes, or quiet for 3 days, and you're paused: the chain carries on without you until your next check-in. Nobody counts until their first check-in, so someone who never starts can't break it."}
       </p>
       <button
         disabled={busy}

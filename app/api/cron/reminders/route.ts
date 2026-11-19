@@ -6,7 +6,7 @@ import { keptCount } from "@/lib/rounds";
 import { sendPush } from "@/lib/push";
 import { fetchAll, type Pact } from "@/lib/data";
 import { capitalize, firstName, listNames, makeUpLabel } from "@/lib/view";
-import { byDeadline, eveningDue, morningDue, pactDeadline, tzFor, zonedTime } from "@/lib/reminders";
+import { byDeadline, eveningDue, isDaytime, morningDue, pactDeadline, tzFor, zonedTime } from "@/lib/reminders";
 import type { PactState } from "@/lib/streak";
 
 /**
@@ -26,7 +26,7 @@ import type { PactState } from "@/lib/streak";
  * "You finished" goes out the morning after the last day, their time (a second day of slack covers missed runs).
  */
 type M = { pact_id: string; user_id: string; joined_on: string; left_on: string | null; profile: unknown };
-type C = { pact_id: string; user_id: string; day: string };
+type C = { pact_id: string; user_id: string; day: string; value?: number | null };
 type Profile = { display_name?: string; timezone?: string | null } | null;
 
 export async function GET(req: NextRequest) {
@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
   const admin = createAdminClient();
   const now = new Date();
   // every push this run, by kind, for the admin Health page (cron_runs)
-  const tally: Record<PushKind, number> = { evening: 0, makeup: 0, finished: 0, break_morning: 0 };
+  const tally: Record<PushKind, number> = { evening: 0, makeup: 0, finished: 0, break_morning: 0, paused: 0 };
   let failed = 0;
   const pushAs =
     (kind: PushKind): typeof sendPush =>
@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ checked, sent });
 }
 
-type PushKind = "evening" | "makeup" | "finished" | "break_morning";
+type PushKind = "evening" | "makeup" | "finished" | "break_morning" | "paused";
 
 /** One reminder pass. Returns how many pacts it looked at; pushes are counted through `pushAs`. */
 async function remind(admin: ReturnType<typeof createAdminClient>, now: Date, pushAs: (kind: PushKind) => typeof sendPush): Promise<number> {
@@ -108,7 +108,7 @@ async function remind(admin: ReturnType<typeof createAdminClient>, now: Date, pu
     fetchAll<M>(() =>
       admin.from("pact_members").select("pact_id,user_id,joined_on,left_on,profile:profiles(display_name,timezone)").in("pact_id", ids).order("pact_id").order("user_id"),
     ),
-    fetchAll<C>(() => admin.from("checkins").select("pact_id,user_id,day").in("pact_id", ids).order("id")),
+    fetchAll<C>(() => admin.from("checkins").select("pact_id,user_id,day,value").in("pact_id", ids).order("id")),
     fetchAll<{ pact_id: string; period_start: string; paid_by: string | null; covers: string | null }>(() =>
       admin.from("freezes").select("pact_id,period_start,paid_by,covers").in("pact_id", ids).order("pact_id").order("period_start").order("id"),
     ),
@@ -131,6 +131,12 @@ async function remind(admin: ReturnType<typeof createAdminClient>, now: Date, pu
     const tzOf = (u: string) => tzFor((ms.find((m) => m.user_id === u)?.profile as Profile)?.timezone, pact.timezone);
     return { ms, cs, xs, state, tzOf };
   };
+
+  for (const pact of [...due, ...finished]) {
+    const { ms, state, tzOf } = load(pact);
+    await saveAutoFreezes(admin, pact, state);
+    if (due.includes(pact)) await announcePauses(admin, pushAs("paused"), pact, ms, state, todayIn(pact.timezone, now), tzOf, now);
+  }
 
   for (const pact of due) {
     const today = todayIn(pact.timezone, now);
@@ -221,7 +227,7 @@ async function remind(admin: ReturnType<typeof createAdminClient>, now: Date, pu
         ),
         sendEvening(
           group.filter((u) => owesLate.has(u) && !atRisk.has(u)),
-          { title: `${pact.emoji} Last chance to make up ${label}`, body: `The chain breaks at ${until}. ${streakBit}`, url, tag },
+          { title: `${pact.emoji} Last chance to make up ${label}`, body: `Make it up before ${until} to keep your freezes. ${streakBit}`, url, tag },
         ),
         sendEvening(
           group.filter((u) => !owesLate.has(u)),
@@ -350,4 +356,54 @@ async function breakMorning(
 function nameOf(ms: M[], id: string) {
   const m = ms.find((x) => x.user_id === id);
   return ((m?.profile as Profile)?.display_name ?? "").trim() || "Your partner";
+}
+
+/**
+ * The rules spend a missing person's own freeze once the make-up window closes (computePactState, autoFreezes).
+ * Write them down so the freeze counts in SQL (freezes_left) match the app. Idempotent: one row per person per period.
+ */
+async function saveAutoFreezes(admin: ReturnType<typeof createAdminClient>, pact: Pact, state: PactState) {
+  if (!state.autoFreezes.length) return;
+  const { error } = await admin.from("freezes").upsert(
+    state.autoFreezes.map((f) => ({ pact_id: pact.id, period_start: f.period, covers: f.covers, paid_by: f.covers, used_by: null })),
+    { onConflict: "pact_id,period_start,covers", ignoreDuplicates: true },
+  );
+  if (error) console.error("auto freezes failed", pact.id, error.message);
+}
+
+/**
+ * Someone was just paused (3 quiet days, a quiet week, or a miss with no freezes left): one push to them and one to
+ * the rest of the group, in the daytime on the paused person's clock. Break pacts never name the habit.
+ */
+async function announcePauses(
+  admin: ReturnType<typeof createAdminClient>,
+  push: typeof sendPush,
+  pact: Pact,
+  ms: M[],
+  state: PactState,
+  today: string,
+  tzOf: (u: string) => string,
+  now: Date,
+) {
+  const fresh = Object.entries(state.paused).filter(([u, p]) => p.since >= addDays(today, -2) && isDaytime(now, tzOf(u)));
+  if (!fresh.length) return;
+  const { data: claimed } = await admin
+    .from("checkin_notify_log")
+    .upsert(fresh.map(([u, p]) => ({ pact_id: pact.id, user_id: u, day: p.since, kind: "paused" })), {
+      onConflict: "pact_id,user_id,day,kind",
+      ignoreDuplicates: true,
+    })
+    .select("user_id");
+  const url = `/p/${pact.id}`;
+  const tag = `pact-${pact.id}`;
+  const what = pact.kind === "break" ? "your pact" : pact.title;
+  for (const u of (claimed ?? []).map((r) => r.user_id as string)) {
+    const why = state.paused[u]?.why === "out" ? "out of freezes" : pact.cadence === "daily" ? "quiet for 3 days" : "quiet for a week";
+    const name = firstName(nameOf(ms, u));
+    const others = ms.filter((m) => !m.left_on && m.user_id !== u && !state.paused[m.user_id]).map((m) => m.user_id);
+    await Promise.all([
+      push([u], { title: `${pact.emoji} You're paused in ${what}`, body: `You were ${why}, so the chain is carrying on without you. Check in any day to jump back in.`, url, tag }),
+      push(others, { title: `${pact.emoji} ${name} is paused`, body: `${capitalize(why)}, so the chain keeps going without them. A nudge might bring them back.`, url, tag }),
+    ]);
+  }
 }
