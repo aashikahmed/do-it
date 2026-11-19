@@ -29,6 +29,7 @@ export function Avatar({
   size = 36,
   ring,
   done,
+  paused,
   onTap,
 }: {
   id: string;
@@ -40,6 +41,8 @@ export function Avatar({
   ring?: string;
   /** show a check badge */
   done?: boolean;
+  /** soon: an ice ring (paused when yesterday closes). now: faded, with an ice pause badge. */
+  paused?: "soon" | "now";
   /** silent tap handler (used for logging; avatars have no tap action of their own) */
   onTap?: () => void;
 }) {
@@ -54,7 +57,13 @@ export function Avatar({
         style={{
           background: colorFor(id),
           fontSize: size * 0.38,
-          boxShadow: ring ? `0 0 0 2.5px ${ring}` : undefined,
+          boxShadow:
+            paused === "soon"
+              ? `0 0 0 2px ${ring ?? "#fff"}, 0 0 0 4px var(--color-ice)`
+              : ring
+                ? `0 0 0 2.5px ${ring}`
+                : undefined,
+          opacity: paused === "now" ? 0.45 : undefined,
         }}
       >
         {showPhoto ? (
@@ -75,6 +84,17 @@ export function Avatar({
           initials(name)
         )}
       </span>
+      {paused === "now" && !done && (
+        <span
+          aria-hidden
+          className="absolute -right-0.5 -bottom-0.5 flex items-center justify-center rounded-full bg-ice text-ink"
+          style={{ width: size * 0.46, height: size * 0.46, boxShadow: `0 0 0 2px ${ring ?? "#fff"}` }}
+        >
+          <svg viewBox="0 0 12 12" width={size * 0.26} height={size * 0.26}>
+            <path d="M4 2.5v7M8 2.5v7" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+          </svg>
+        </span>
+      )}
       {done && (
         <span
           aria-hidden

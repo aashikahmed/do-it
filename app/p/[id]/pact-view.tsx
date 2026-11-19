@@ -28,11 +28,13 @@ import {
   myFreezes,
   firstName,
   isPaused,
+  lateOutcome,
+  quietSpan,
   isStarting,
   missOutcome,
   listNames,
   makeUpLabel,
-  othersOwingMakeUp,
+  othersRiskingChain,
   owesMakeUp,
   owesYesterdayAnswer,
   progressText,
@@ -104,6 +106,7 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
           <>
             {isSolo && <SoloInvite b={b} />}
             {!isSolo && <PushCard partner={firstName(members.find((m) => m.user_id !== me.id)?.name ?? "")} />}
+            {state.phase === "active" && isPaused(b, me.id) && <PausedCard b={b} me={me.id} />}
             <Roster b={b} me={me} />
           </>
         )}
@@ -185,7 +188,7 @@ function Hero({ b, me, onMenu }: { b: PactBundle; me: Me; onMenu: () => void }) 
           </motion.p>
           <p className="mt-1 text-[17px] font-bold">
             {label}
-            {state.late && !isBreak && <span className="ml-2 rounded-full bg-white/20 px-2.5 py-0.5 text-[14px] font-extrabold">on the line</span>}
+            {state.late && !isBreak && (owesMakeUp(b, me.id) || othersRiskingChain(b, me.id).length > 0) && <span className="ml-2 rounded-full bg-white/20 px-2.5 py-0.5 text-[14px] font-extrabold">on the line</span>}
           </p>
         </div>
         <dl className="space-y-1 pb-1 text-right text-[14px] font-semibold opacity-90">
@@ -238,78 +241,147 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
   const { pact, state, members } = b;
   const cur = state.current;
   const title = state.phase === "upcoming" ? "Who's in" : pact.cadence === "daily" ? "Today" : "This week";
+  const until = useUntil(b, me.id);
+  const todaysOf = (id: string) => b.checkins.find((c) => c.user_id === id && c.day === b.today);
+  // paused people sit at the bottom under their own heading; a check-in brings them straight back
+  const pausedNow = (id: string) => state.phase === "active" && isPaused(b, id) && !todaysOf(id);
+  const active = members.filter((m) => !pausedNow(m.user_id));
+  const paused = members.filter((m) => pausedNow(m.user_id));
+
+  function row(m: (typeof members)[number]) {
+    const isMe = m.user_id === me.id;
+    const first = firstName(m.name);
+    const todays = todaysOf(m.user_id);
+    const count = cur?.counts[m.user_id] ?? 0;
+    // joined mid-pact: already in and can check in now, but the chain counts them from the next period
+    const starting = isStarting(b, m.user_id);
+    const done = pact.cadence === "daily" ? !!todays : count >= state.need;
+    const nudged = b.nudges.some((n) => n.from_user === me.id && n.to_user === m.user_id);
+    const isBreak = pact.kind === "break";
+    const owesLate = isBreak ? owesYesterdayAnswer(b, m.user_id) : owesMakeUp(b, m.user_id);
+    // break pacts only nudge about yesterday; build pacts nudge anyone who hasn't done their part, new joiners too
+    const canNudge = !isMe && (state.phase === "active" || owesLate) && (isBreak ? owesLate : !done || owesLate);
+    const isPausedNow = pausedNow(m.user_id);
+    const why = isPausedNow ? state.paused[m.user_id].why : null;
+    // what yesterday's deadline does to them if they let it pass (a freeze covers it, unless they're paused or it breaks)
+    const outcome = isMe ? null : lateOutcome(b, m.user_id);
+    const pausing = outcome === "quiet" || outcome === "out";
+    const about = owesLate ? "yesterday" : isPausedNow ? "back" : starting ? "start" : "today";
+    const late = state.late ? makeUpLabel(pact.cadence, state.late) : "yesterday";
+
+    let status: string;
+    let sub: string | null = null;
+    if (state.phase === "upcoming") status = isMe ? "Ready" : `Joined ${formatDay(m.joined_at.slice(0, 10), { day: "numeric", month: "short" })}`;
+    else if (isPausedNow) {
+      status = why === "out" ? "Out of freezes" : `After ${quietSpan(pact.cadence)}`;
+      sub = isMe
+        ? isBreak
+          ? "Answer to come back."
+          : "Check in to come back."
+        : `Back in with their next ${isBreak ? "answer" : "check-in"}.${canNudge ? " Bring them back." : ""}`;
+    } else if (outcome === "quiet") {
+      status = pact.cadence === "daily" ? "Quiet for 3 days" : "Quiet all last week";
+      sub = `Paused at ${until} if ${first} stays quiet.`;
+    } else if (outcome === "out") {
+      status = "Out of freezes";
+      sub = `Paused at ${until} unless ${first} ${isBreak ? "answers for" : "makes up"} ${late}.`;
+    } else if (starting && (isBreak ? answerOn(b, m.user_id, b.today) === null : !todays && count === 0))
+      status = m.joined_at.slice(0, 10) < addDays(b.today, -1) ? "Hasn't started yet" : "Just joined";
+    else if (isBreak) status = breakStatus(b, m.user_id, todays);
+    else if (pact.cadence === "daily") status = todays ? describe(todays, pact) : "Not yet";
+    else if (starting) status = `${count} this week${todays ? ", done today" : ""}`;
+    else status = `${count} of ${state.need} this week${todays ? ", done today" : ""}`;
+
+    return (
+      <HeartRow key={m.user_id} b={b} me={me} c={todays} className="flex items-center gap-3 rounded-[18px] px-3 py-3">
+        {(hearts) => (
+          <>
+            <Avatar
+              id={m.user_id}
+              name={m.name}
+              src={m.avatar_url}
+              size={44}
+              done={state.phase === "active" && (isBreak ? answerOn(b, m.user_id, b.today) === "yes" : done)}
+              paused={isPausedNow ? "now" : pausing ? "soon" : undefined}
+              onTap={isMe ? undefined : () => logAvatarTap(pact.id, m.user_id)}
+            />
+            <div className="min-w-0 flex-1">
+              <p className={`truncate text-[17px] font-bold ${isPausedNow ? "text-ink-2" : ""}`}>
+                {m.name}
+                {isMe && <span className="font-medium text-ink-3"> (you)</span>}
+              </p>
+              <p className={`truncate text-[15px] ${done ? "font-semibold text-ink" : "text-ink-2"}`}>{status}</p>
+              {sub && <p className="text-[14px] leading-snug font-semibold text-ink-2">{sub}</p>}
+              {!sub && starting && (
+                <p className="text-[14px] font-semibold text-ink-2">
+                  {canNudge ? "Get them going. " : ""}
+                  {chainCountsText(b, m.user_id, isMe ? "you" : "them")}
+                </p>
+              )}
+              {todays?.note && <p className="mt-0.5 line-clamp-2 text-[15px] text-ink-2">“{todays.note}”</p>}
+              {hearts}
+              {!pausing && owesLate && isBreak && <p className="truncate text-[14px] font-semibold text-ink-2">Hasn&apos;t answered for yesterday</p>}
+              {!pausing && owesLate && !isBreak && state.late &&
+                (isMe || outcome === "break" ? (
+                  <p className="truncate text-[14px] font-bold text-[#c4381b]">Still owes {late}</p>
+                ) : (
+                  // their own freeze covers it if they don't: nothing at stake for anyone else
+                  <p className="text-[14px] leading-snug font-semibold text-ink-2">Has until {until} to make up {late}</p>
+                ))}
+            </div>
+            {canNudge && (
+              <div className="flex shrink-0 items-center gap-1.5">
+                <WhatsAppNudge b={b} me={me} toUser={m.user_id} name={first} about={about} />
+                <NudgeButton pactId={pact.id} toUser={m.user_id} name={first} nudged={nudged} about={about} />
+              </div>
+            )}
+          </>
+        )}
+      </HeartRow>
+    );
+  }
 
   return (
     <section className="rounded-[24px] bg-paper p-2">
       <h2 className="px-3 pt-3 pb-1 text-[17px] font-extrabold">{title}</h2>
-      <ul>
-        {members.map((m) => {
-          const isMe = m.user_id === me.id;
-          const todays = b.checkins.find((c) => c.user_id === m.user_id && c.day === b.today);
-          const count = cur?.counts[m.user_id] ?? 0;
-          // joined mid-pact: already in and can check in now, but the chain counts them from the next period
-          const starting = isStarting(b, m.user_id);
-          const done = pact.cadence === "daily" ? !!todays : count >= state.need;
-          const nudged = b.nudges.some((n) => n.from_user === me.id && n.to_user === m.user_id);
-          const isBreak = pact.kind === "break";
-          const owesLate = isBreak ? owesYesterdayAnswer(b, m.user_id) : owesMakeUp(b, m.user_id);
-          // break pacts only nudge about yesterday; build pacts nudge anyone who hasn't done their part, new joiners too
-          const canNudge = !isMe && (state.phase === "active" || owesLate) && (isBreak ? owesLate : !done || owesLate);
-          const paused = isPaused(b, m.user_id);
-          const about = owesLate ? "yesterday" : paused ? "back" : starting ? "start" : "today";
-          let status: string;
-          if (state.phase === "upcoming") status = isMe ? "Ready" : `Joined ${formatDay(m.joined_at.slice(0, 10), { day: "numeric", month: "short" })}`;
-          else if (paused && !todays) status = state.paused[m.user_id].why === "out" ? "Paused, out of freezes" : `Paused after ${pact.cadence === "daily" ? "3 quiet days" : "a quiet week"}`;
-          else if (starting && (isBreak ? answerOn(b, m.user_id, b.today) === null : !todays && count === 0))
-            status = m.joined_at.slice(0, 10) < addDays(b.today, -1) ? "Hasn't started yet" : "Just joined";
-          else if (isBreak) status = breakStatus(b, m.user_id, todays);
-          else if (pact.cadence === "daily") status = todays ? describe(todays, pact) : "Not yet";
-          else if (starting) status = `${count} this week${todays ? ", done today" : ""}`;
-          else status = `${count} of ${state.need} this week${todays ? ", done today" : ""}`;
+      <ul>{active.map(row)}</ul>
+      {paused.length > 0 && (
+        <>
+          <div className="mx-3 mt-1 border-t border-line" />
+          <h3 className="px-3 pt-3 text-[14px] font-bold text-ink-2">Paused</h3>
+          <ul>{paused.map(row)}</ul>
+        </>
+      )}
+    </section>
+  );
+}
 
-          return (
-            <HeartRow key={m.user_id} b={b} me={me} c={todays} className="flex items-center gap-3 rounded-[18px] px-3 py-3">
-              {(hearts) => (
-                <>
-                  <Avatar
-                    id={m.user_id}
-                    name={m.name}
-                    src={m.avatar_url}
-                    size={44}
-                    done={state.phase === "active" && (isBreak ? answerOn(b, m.user_id, b.today) === "yes" : done)}
-                    onTap={isMe ? undefined : () => logAvatarTap(pact.id, m.user_id)}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[17px] font-bold">
-                      {m.name}
-                      {isMe && <span className="font-medium text-ink-3"> (you)</span>}
-                    </p>
-                    <p className={`truncate text-[15px] ${done ? "font-semibold text-ink" : "text-ink-2"}`}>{status}</p>
-                    {starting && (
-                      <p className="text-[14px] font-semibold text-ink-2">
-                        {canNudge ? (paused ? "Bring them back. " : "Get them going. ") : ""}
-                        {chainCountsText(b, m.user_id, isMe ? "you" : "them")}
-                      </p>
-                    )}
-                    {todays?.note && <p className="mt-0.5 line-clamp-2 text-[15px] text-ink-2">“{todays.note}”</p>}
-                    {hearts}
-                    {owesLate && isBreak && <p className="truncate text-[14px] font-semibold text-ink-2">Hasn&apos;t answered for yesterday</p>}
-                    {owesLate && !isBreak && state.late && (
-                      <p className="truncate text-[14px] font-bold text-[#c4381b]">Still owes {makeUpLabel(pact.cadence, state.late)}</p>
-                    )}
-                  </div>
-                  {canNudge && (
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      <WhatsAppNudge b={b} me={me} toUser={m.user_id} name={firstName(m.name)} about={about} />
-                      <NudgeButton pactId={pact.id} toUser={m.user_id} name={firstName(m.name)} nudged={nudged} about={about} />
-                    </div>
-                  )}
-                </>
-              )}
-            </HeartRow>
-          );
-        })}
-      </ul>
+/** You're paused: why, and that one check-in brings you back. */
+function PausedCard({ b, me }: { b: PactBundle; me: string }) {
+  const { pact, state } = b;
+  const p = state.paused[me];
+  const daily = pact.cadence === "daily";
+  const isBreak = pact.kind === "break";
+  const why =
+    p.why === "quiet"
+      ? daily
+        ? "You were quiet for 3 days. Your freezes covered them, and the chain kept going without you."
+        : "You were quiet for a week. Your freeze covered it, and the chain kept going without you."
+      : `You missed ${daily ? (p.since === b.yesterday ? "yesterday" : formatDay(p.since, { weekday: "long" })) : "a week"} with no freezes left, so the chain kept going without you.`;
+  const back = isBreak ? "Answer and you're back in." : daily ? "Check in today and you're back in." : "Check in and you're back in.";
+  return (
+    <section className="rounded-[24px] bg-ice/25 p-5">
+      <div className="flex items-center gap-2.5">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ice text-ink" aria-hidden>
+          <svg viewBox="0 0 12 12" width="12" height="12">
+            <path d="M4 2.5v7M8 2.5v7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+          </svg>
+        </span>
+        <p className="text-[19px] leading-tight font-extrabold">You&apos;re paused</p>
+      </div>
+      <p className="mt-2 text-[15px] leading-snug text-ink-2">
+        {why} {back}
+      </p>
     </section>
   );
 }
@@ -730,7 +802,8 @@ function MakeUpCard({ b, me, onCelebrate }: { b: PactBundle; me: string; onCeleb
   const late = state.late!;
   const label = makeUpLabel(pact.cadence, late);
   const iOwe = owesMakeUp(b, me);
-  const others = othersOwingMakeUp(b, me);
+  // anyone else is covered either way (their own freeze, or a pause), so only a miss that breaks the chain is waited on
+  const others = othersRiskingChain(b, me);
   const [missOpen, setMissOpen] = useState(false);
   const log = useLogSheet();
   const [busy, setBusy] = useState(false);
@@ -761,15 +834,19 @@ function MakeUpCard({ b, me, onCelebrate }: { b: PactBundle; me: string; onCeleb
     router.refresh();
   }
 
+  if (!iOwe && !others.length && older.length === 0) return null;
+
   return (
     <motion.section initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="rounded-[24px] bg-[#ffe2db] p-5 text-ink">
-      <p className="text-[20px] leading-tight font-extrabold">{iOwe ? `${capitalize(label)} is still open` : `Waiting on ${listNames(others)} for ${label}`}</p>
+      <p className="text-[20px] leading-tight font-extrabold">{iOwe ? `${capitalize(label)} is still open` : others.length ? `Waiting on ${listNames(others)} for ${label}` : `${capitalize(olderLabel)} ${older.length === 1 ? "was" : "were"} missed`}</p>
       <p className="mt-1.5 text-[15px] leading-snug text-ink-2">
         {iOwe
           ? pact.cadence === "daily"
             ? `You have until ${until} to make it up. ${breaks}`
             : `One more check-in, logged for yesterday, closes it. You have until ${until}.`
-          : `${others.length === 1 ? `${others[0]} has` : "They have"} until ${until} to make it up. A nudge might help.`}
+          : others.length
+            ? `${others.length === 1 ? `${others[0]} has` : "They have"} until ${until} to make it up. A nudge might help.`
+            : `Only a freeze can save ${older.length === 1 ? "it" : "them"}.`}
       </p>
       {older.length > 0 && (
         <div className="mt-3 rounded-2xl bg-white/70 p-3">
@@ -1091,7 +1168,7 @@ function YesterdayCard({ b, me, onCelebrate }: { b: PactBundle; me: string; onCe
   }
 
   if (!iOwe) {
-    const others = othersOwingMakeUp(b, me);
+    const others = othersRiskingChain(b, me);
     if (!others.length) return null;
     return (
       <section className="rounded-[24px] bg-paper p-5">
