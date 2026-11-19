@@ -137,6 +137,11 @@ export function cadenceText(p: ScheduleBits) {
   return `${freq} for ${weeks} weeks`;
 }
 
+/** Has the chain paused this person (3 quiet days, or a miss with no freezes left)? Their next check-in brings them back. */
+export function isPaused(b: Pick<PactBundle, "state">, id: string) {
+  return !!b.state.paused[id];
+}
+
 /** Has this person made a check-in that counts? Until then the chain doesn't count them (see countsFrom). */
 export function hasStarted(b: Pick<PactBundle, "state">, id: string) {
   return !!b.state.countsFrom[id];
@@ -156,6 +161,7 @@ export function isStarting(b: Pick<PactBundle, "state" | "members">, id: string)
  * Monday", the next pact week). Counting after the last period means this round ends first. No full stop, callers add one.
  */
 export function chainCountsText(b: Pick<PactBundle, "state" | "members" | "today">, id: string, who: "you" | "them") {
+  if (b.state.paused[id]) return `The chain counts ${who} again from ${who === "you" ? "your" : "their"} next check-in`;
   const from = b.state.countsFrom[id];
   if (!from) return `The chain starts counting ${who} after ${who === "you" ? "your" : "their"} first check-in`;
   if (from > b.state.endDate) return `This round ends before the chain counts ${who}`;
@@ -218,6 +224,10 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
   const othersOwing = others.filter((m) => cur.required.includes(m.user_id) && owes(m.user_id));
   const othersDone = others.filter((m) => !owes(m.user_id));
 
+  if (isPaused(b, me)) {
+    const why = state.paused[me].why === "out" ? "You were out of freezes, so you're paused." : `You're paused after ${pact.cadence === "daily" ? "3 quiet days" : "a quiet week"}.`;
+    return { text: `${why} Check in to jump back in.`, tone: "info" };
+  }
   if (isStarting(b, me) && iOwe) {
     const start = pact.cadence === "daily" ? "Check in today." : "Log your days this week.";
     return { text: `You're in. ${start} ${chainCountsText(b, me, "you")}.`, tone: "info" };
@@ -233,11 +243,15 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
   }
   if (!others.length) return { text: "Done. Invite someone to share the chain.", tone: "done" };
   if (othersOwing.length) return { text: `Waiting on ${listNames(othersOwing.map((m) => firstName(m.name)))}`, tone: "wait" };
-  // the chain is safe, but someone in the pact hasn't checked in even once
+  // the chain is safe, but someone in the pact hasn't checked in even once, or is paused
   const notYet = others.filter((m) => !hasStarted(b, m.user_id) && owes(m.user_id));
-  if (notYet.length) {
-    const names = listNames(notYet.map((m) => firstName(m.name)));
-    return { text: `${pact.cadence === "daily" ? "Done for today" : "Target hit this week"}. ${names} ${notYet.length === 1 ? "hasn't" : "haven't"} started yet.`, tone: "done" };
+  const away = others.filter((m) => isPaused(b, m.user_id) && owes(m.user_id));
+  if (notYet.length || away.length) {
+    const bits = [
+      notYet.length ? `${listNames(notYet.map((m) => firstName(m.name)))} ${notYet.length === 1 ? "hasn't" : "haven't"} started yet.` : "",
+      away.length ? `${listNames(away.map((m) => firstName(m.name)))} ${away.length === 1 ? "is" : "are"} paused.` : "",
+    ].filter(Boolean);
+    return { text: `${pact.cadence === "daily" ? "Done for today" : "Target hit this week"}. ${bits.join(" ")}`, tone: "done" };
   }
   return { text: pact.cadence === "daily" ? "Everyone's in today" : "Everyone hit the target this week", tone: "done" };
 }
@@ -337,4 +351,15 @@ export function freezeOffer(b: Pick<PactBundle, "state" | "members">, me: string
     ? `🎁 Give ${listNames(plan.gifts.map(name))} ${n === 1 ? "a freeze" : `${n} freezes`}`
     : `🧊 Use ${n === 1 ? "a freeze" : `${n} freezes`}`;
   return { ok: plan.ok, n, button, note: notes.join(" "), gifts: plan.gifts, payments: plan.payments };
+}
+
+/**
+ * What a miss of yours does now: your own freeze covers it, or (out of freezes) you're paused and the chain carries
+ * on without you. Only alone, with no freezes left, does it break. One or two sentences, ends with a full stop.
+ */
+export function missOutcome(b: Pick<PactBundle, "state" | "members">, me: string) {
+  const left = myFreezes(b, me);
+  if (left > 0) return `One of your freezes covers it, so the streak keeps going. You'll have ${left - 1} left.`;
+  if (b.members.length > 1) return "You're out of freezes, so you're paused and the chain carries on without you. Check in any day to jump back in.";
+  return `You're out of freezes, so the chain breaks. Your best stays ${b.state.best}.`;
 }

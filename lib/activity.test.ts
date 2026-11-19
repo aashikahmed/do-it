@@ -54,6 +54,16 @@ describe("activity: daily build pacts", () => {
     expect(miss).toMatchObject({ cover: { by: B } });
   });
 
+  it("a miss covers itself: the chip shows before the cron writes the freeze down", () => {
+    const miss = rowsOn(feed(daily, checkins, today), "2026-11-04").find((r) => r.type === "miss");
+    expect(miss).toMatchObject({ user: A, cover: { by: A } });
+  });
+
+  it("out of freezes: the day still has a row, with no chip", () => {
+    const miss = rowsOn(feed({ ...daily, freezes_allowed: 0 }, checkins, today), "2026-11-04").find((r) => r.type === "miss");
+    expect(miss).toMatchObject({ user: A, said: false, cover: null });
+  });
+
   it("puts the newest entries first and silent rows last, newest day first", () => {
     const out = feed(daily, checkins, today);
     expect(out[0].day).toBe("2026-11-07");
@@ -127,34 +137,60 @@ describe("previewing a change", () => {
     ...over,
   });
 
-  it("a kept day changed to missed breaks the chain, and says what still counts", () => {
+  it("a kept day changed to missed uses one of your freezes by itself", () => {
     const x = base();
     const before = computePactState(x.pact, x.members, x.checkins, x.freezes, today, x.misses);
     const p = previewDay(x, A, "2026-11-04", false, null, false);
-    expect(p.needsFreeze).toBe(true);
-    expect(p.canFreeze).toBe(true);
-    expect(p.period?.status).toBe("missed");
+    expect(p.needsFreeze).toBe(false);
+    expect(p.period?.status).toBe("frozen");
+    expect(p.state.streak).toBe(9);
+    expect(p.freezesLeft).toBe(2);
     expect(changeText(before, p, A, "2026-11-04", "Wednesday", "day")).toEqual({
-      text: "Wednesday breaks the chain. Your 8 kept days still count.",
+      text: "Wednesday uses one of your freezes, so the chain keeps going. You'll have 2 left.",
+      tone: "plain",
+    });
+    // there's nothing to tap: asking for a freeze changes nothing
+    const asked = previewDay(x, A, "2026-11-04", false, null, true);
+    expect(asked.frozen).toBe(false);
+    expect(asked.freezesLeft).toBe(2);
+  });
+
+  it("out of freezes in a pair: the day counts without you", () => {
+    const x = base({ pact: { ...daily, freezes_allowed: 0 } });
+    const before = computePactState(x.pact, x.members, x.checkins, x.freezes, today, x.misses);
+    const p = previewDay(x, A, "2026-11-04", false, null, false);
+    expect(p.needsFreeze).toBe(false);
+    expect(p.period?.status).toBe("done");
+    expect(p.period?.paused).toEqual([A]);
+    expect(p.state.streak).toBe(9);
+    // checked in after it, so already back
+    expect(p.state.paused[A]).toBeUndefined();
+    expect(changeText(before, p, A, "2026-11-04", "Wednesday", "day")).toEqual({
+      text: "Wednesday counts without you, since you're out of freezes. The chain keeps going.",
       tone: "warn",
     });
   });
 
-  it("with a freeze it stays kept, and costs one of yours", () => {
-    const x = base();
+  it("out of freezes on the last day: paused until your next check-in", () => {
+    const x = base({ pact: { ...daily, freezes_allowed: 0 } });
     const before = computePactState(x.pact, x.members, x.checkins, x.freezes, today, x.misses);
-    const p = previewDay(x, A, "2026-11-04", false, null, true);
-    expect(p.frozen).toBe(true);
-    expect(p.period?.status).toBe("frozen");
-    expect(p.state.streak).toBe(9);
-    expect(changeText(before, p, A, "2026-11-04", "Wednesday", "day").text).toBe("Wednesday stays kept with one of your freezes. You'll have 2 left.");
+    const p = previewDay(x, A, "2026-11-09", false, null, false);
+    expect(p.state.paused[A]).toMatchObject({ since: "2026-11-09", why: "out" });
+    expect(changeText(before, p, A, "2026-11-09", "Yesterday", "day").text).toBe(
+      "Yesterday counts without you, since you're out of freezes. The chain keeps going. You'll be paused until your next check-in.",
+    );
   });
 
-  it("fixing a missed day joins the chain back up", () => {
-    const x = base({ checkins: [...ci(A, days.filter((d) => d !== "2026-11-04")), ...ci(B, days)] });
+  it("fixing a day nobody kept joins the chain back up", () => {
+    // both missed Wednesday with no freezes: the chain broke
+    const x = base({
+      pact: { ...daily, freezes_allowed: 0 },
+      checkins: [...ci(A, days.filter((d) => d !== "2026-11-04")), ...ci(B, days.filter((d) => d !== "2026-11-04"))],
+    });
     const before = computePactState(x.pact, x.members, x.checkins, x.freezes, today, x.misses);
     expect(before.streak).toBe(5);
     const p = previewDay(x, A, "2026-11-04", true, null, false);
+    expect(p.period?.paused).toEqual([B]);
     expect(changeText(before, p, A, "2026-11-04", "Wednesday", "day")).toEqual({
       text: "Wednesday is kept, and the chain joins back up: 9 days.",
       tone: "good",
@@ -170,18 +206,18 @@ describe("previewing a change", () => {
     expect(changeText(before, p, A, "2026-11-04", "Wednesday", "day").text).toBe("Wednesday is kept on its own, so your freeze comes back. You'll have 3.");
   });
 
-  it("a freeze from you alone can't keep a day someone else missed too", () => {
-    const x = base({ checkins: [...ci(A, days), ...ci(B, days.filter((d) => d !== "2026-11-04"))] });
+  it("nobody kept it and a partner can't pay: it breaks, and a freeze from you alone won't keep it", () => {
+    const x = base({ pact: { ...daily, freezes_allowed: 0 }, checkins: [...ci(A, days), ...ci(B, days.filter((d) => d !== "2026-11-04"))] });
+    const before = computePactState(x.pact, x.members, x.checkins, x.freezes, today, x.misses);
     const p = previewDay(x, A, "2026-11-04", false, null, true);
+    expect(p.period?.status).toBe("missed");
+    expect(p.needsFreeze).toBe(true);
     expect(p.othersUncovered).toBe(true);
     expect(p.canFreeze).toBe(false);
     expect(p.frozen).toBe(false);
-  });
-
-  it("out of freezes: can't cover it", () => {
-    const x = base({ pact: { ...daily, freezes_allowed: 0 } });
-    const p = previewDay(x, A, "2026-11-04", false, null, true);
-    expect(p.needsFreeze).toBe(true);
-    expect(p.canFreeze).toBe(false);
+    expect(changeText(before, p, A, "2026-11-04", "Wednesday", "day")).toEqual({
+      text: "Wednesday breaks the chain. Your 8 kept days still count.",
+      tone: "warn",
+    });
   });
 });

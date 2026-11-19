@@ -78,7 +78,14 @@ export function activityDays(input: {
   changes: DayChange[];
   today: Day;
 }): ActivityDay[] {
-  const { pact, state, checkins, misses, freezes, changes, today } = input;
+  const { pact, state, checkins, misses, changes, today } = input;
+  // automatic freezes count as soon as the engine spends them; the hourly cron writes them down later
+  const freezes: ActivityFreeze[] = [
+    ...input.freezes,
+    ...state.autoFreezes
+      .filter((a) => !input.freezes.some((f) => f.period_start === a.period && f.covers === a.covers))
+      .map((a) => ({ period_start: a.period, covers: a.covers, paid_by: a.covers, used_by: null })),
+  ];
   const weekly = pact.cadence === "weekly";
   // the latest change per person per day
   const lastChange = new Map<string, DayChange>();
@@ -119,7 +126,8 @@ export function activityDays(input: {
   for (const p of state.periods) {
     if (p.end >= today || p.status === "late" || p.status === "upcoming" || p.rest) continue;
     const need = Math.min(state.need, diffDays(p.start, p.end) + 1);
-    for (const u of p.required) {
+    // the ones it paused for missing it with no freezes left still get their row (no chip)
+    for (const u of [...p.required, ...p.paused]) {
       const count = p.counts[u] ?? 0;
       if (count >= need) continue;
       if (weekly) {
@@ -256,18 +264,31 @@ export function changeText(
   const before_ = before.freezesLeftBy[me] ?? 0;
   const back = after.freezesLeft > before_ && !after.frozen;
   const backText = (lead: string) => (back ? `${lead}your freeze comes back. You'll have ${after.freezesLeft}.` : "");
+  // the miss spends one of your freezes by itself (past the make-up window, misses pay for themselves)
+  const spent = after.freezesLeft < before_ && !after.frozen;
+  // out of freezes in a group: the day counts without you
+  const outNow = pa.paused.includes(me) && !pb.paused.includes(me);
+  const inAgain = pb.paused.includes(me) && !pa.paused.includes(me);
+  const pausedAfter = !!after.state.paused[me];
+  const pausedBefore = !!before.paused[me];
+  const pauseNote =
+    pausedAfter && !pausedBefore ? " You'll be paused until your next check-in." : !pausedAfter && pausedBefore ? " You're back in the chain." : "";
 
   if (!lost(pb.status) && !lost(pa.status)) {
-    if (after.frozen) return { text: `${label} stays kept with one of your freezes. You'll have ${after.freezesLeft} left.`, tone: "plain" };
-    if (back) return { text: `${label} is kept on its own, so ${backText("")}`, tone: "good" };
-    if (pb.status !== pa.status && (pa.status === "done" || pa.status === "frozen")) return { text: `${label} is kept.`, tone: "good" };
+    if (after.frozen) return { text: `${label} stays kept with one of your freezes. You'll have ${after.freezesLeft} left.${pauseNote}`, tone: "plain" };
+    if (back) return { text: `${label} is kept on its own, so ${backText("")}${pauseNote}`, tone: "good" };
+    if (outNow) return { text: `${label} counts without you, since you're out of freezes. The chain keeps going.${pauseNote}`, tone: "warn" };
+    if (inAgain) return { text: `${label} counts with you in it.${pauseNote}`, tone: "good" };
+    if (spent) return { text: `${label} uses one of your freezes, so the chain keeps going. You'll have ${after.freezesLeft} left.${pauseNote}`, tone: "plain" };
+    if (pb.status !== pa.status && (pa.status === "done" || pa.status === "frozen")) return { text: `${label} is kept.${pauseNote}`, tone: "good" };
+    if (pauseNote) return { text: pauseNote.trim(), tone: pausedAfter ? "warn" : "good" };
     return { text: "No change to the chain.", tone: "plain" };
   }
   if (lost(pb.status) && !lost(pa.status)) {
-    const how = after.frozen ? " with one of your freezes" : "";
+    const how = after.frozen || spent ? " with one of your freezes" : outNow ? " without you, since you're out of freezes" : "";
     const joins = after.state.streak > before.streak ? `, and the chain joins back up: ${units(after.state.streak)}.` : ".";
-    const left = after.frozen ? ` You'll have ${after.freezesLeft} left.` : "";
-    return { text: `${label} is kept${how}${joins}${left}`, tone: "good" };
+    const left = after.frozen || spent ? ` You'll have ${after.freezesLeft} left.` : "";
+    return { text: `${label} is kept${how}${joins}${left}${pauseNote}`, tone: "good" };
   }
   if (!lost(pb.status) && lost(pa.status)) {
     const extra = back ? ` ${capital(backText(""))}` : "";

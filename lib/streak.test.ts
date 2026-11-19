@@ -51,12 +51,35 @@ describe("daily pacts", () => {
     expect(s.best).toBe(4);
   });
 
-  it("one partner missing breaks the shared chain", () => {
+  it("a partner's miss uses their own freeze, automatically", () => {
     const days = range("2026-11-01", 3);
     const s = computePactState(daily, both, [...ci(A, ...days), ...ci(B, "2026-11-01", "2026-11-03")], [], "2026-11-04");
+    expect(s.periods[1].status).toBe("frozen");
+    expect(s.streak).toBe(3);
+    expect(s.freezesLeftBy).toEqual({ [A]: 3, [B]: 2 });
+    expect(s.autoFreezes).toEqual([{ period: "2026-11-02", covers: B }]);
+  });
+
+  it("a stored automatic freeze reads the same as the one the rules would spend", () => {
+    const days = range("2026-11-01", 3);
+    const checks = [...ci(A, ...days), ...ci(B, "2026-11-01", "2026-11-03")];
+    const s = computePactState(daily, both, checks, [{ period_start: "2026-11-02", paid_by: B, covers: B }], "2026-11-04");
+    expect(s.periods[1].status).toBe("frozen");
+    expect(s.freezesLeftBy).toEqual({ [A]: 3, [B]: 2 });
+    expect(s.autoFreezes).toEqual([]);
+  });
+
+  it("it only breaks when nobody kept it and someone can't pay, and then nobody's freezes are spent", () => {
+    const days = range("2026-11-01", 3);
+    const pact = { ...daily, freezes_allowed: 0 };
+    const s = computePactState(pact, both, [...ci(A, "2026-11-01", "2026-11-03"), ...ci(B, "2026-11-01", "2026-11-03")], [], "2026-11-04");
     expect(s.periods[1].status).toBe("missed");
     expect(s.streak).toBe(1);
-    expect(s.best).toBe(1);
+    // A could pay, B can't: still broken, and A keeps their freezes
+    const oneOut = computePactState(daily, both, [...ci(A, ...days.filter((d) => d !== "2026-11-02")), ...ci(B, "2026-11-01", "2026-11-03")], [{ period_start: "2026-10-01", paid_by: B, covers: B }, { period_start: "2026-10-02", paid_by: B, covers: B }, { period_start: "2026-10-03", paid_by: B, covers: B }], "2026-11-04");
+    expect(oneOut.periods[1].status).toBe("missed");
+    expect(oneOut.freezesLeftBy[A]).toBe(3);
+    expect(oneOut.autoFreezes).toEqual([]);
   });
 
   it("offers a freeze for the trailing miss and the freeze restores it", () => {
@@ -87,7 +110,7 @@ describe("daily pacts", () => {
       ...ci(A, "2026-11-01", "2026-11-02", "2026-11-04"),
       ...ci(B, "2026-11-01", "2026-11-02", "2026-11-04"),
     ];
-    const s = computePactState(daily, both, checks, [], "2026-11-05");
+    const s = computePactState({ ...daily, freezes_allowed: 0 }, both, checks, [], "2026-11-05");
     expect(s.repair).toBeNull();
     expect(s.streak).toBe(1);
     expect(s.best).toBe(2);
@@ -113,12 +136,12 @@ describe("daily pacts", () => {
       { user_id: A, joined_on: "2026-10-31" },
       { user_id: B, joined_on: "2026-10-31", left_on: "2026-11-03" },
     ];
-    // B missed day 2 then left on day 3: day 2 stays missed, day 3 onwards only needs A
+    // B missed day 2 then left on day 3: day 2 stays B's (frozen with B's freeze), day 3 onwards only needs A
     const s = computePactState(daily, members, [...ci(A, ...days), ...ci(B, "2026-11-01")], [], "2026-11-04");
-    expect(s.periods[1].status).toBe("missed");
+    expect(s.periods[1].status).toBe("frozen");
     expect(s.periods[2].status).toBe("done");
     expect(s.periods[2].required).toEqual([A]);
-    expect(s.streak).toBe(1);
+    expect(s.streak).toBe(3);
   });
 
   it("a late joiner counting from tomorrow does not reopen today", () => {
@@ -182,10 +205,13 @@ describe("nobody counts until their first check-in", () => {
     expect(s.countsFrom[C]).toBe("2026-11-12");
     expect(s.periods[10].required).toEqual([A, F]);
     expect(s.periods[11].required).toEqual([A, F, C]);
-    // C skipped the 13th and 14th: now those break the chain for everyone
+    // C skipped the 13th and 14th: the 13th uses one of C's own freezes, the 14th can still be made up today
     expect(s.periods[11].status).toBe("done");
-    expect(s.periods[12].status).toBe("missed");
-    expect(s.streak).toBe(0);
+    expect(s.periods[12].status).toBe("frozen");
+    expect(s.periods[13].status).toBe("late");
+    expect(s.late?.owing).toEqual([C]);
+    expect(s.freezesLeftBy[C]).toBe(2);
+    expect(s.streak).toBe(13);
   });
 
   it("never before the day they joined", () => {
@@ -266,31 +292,41 @@ describe("make-up day", () => {
     expect(s.streak).toBe(4);
   });
 
-  it("breaks at midnight if nobody makes it up", () => {
+  it("at midnight, a day nobody made up uses their freeze", () => {
     const s = computePactState(daily, both, [...base, ...ci(A, "2026-11-05"), ...ci(B, "2026-11-05")], [], "2026-11-06");
-    expect(s.periods[3].status).toBe("missed");
+    expect(s.periods[3].status).toBe("frozen");
     expect(s.late).toBeNull();
-    expect(s.streak).toBe(1);
+    expect(s.streak).toBe(5);
+  });
+
+  it("at midnight, with no freezes left, they're paused and the day counts without them", () => {
+    const s = computePactState({ ...daily, freezes_allowed: 0 }, both, [...base, ...ci(A, "2026-11-05")], [], "2026-11-06");
+    expect(s.periods[3].status).toBe("done");
+    expect(s.periods[3].required).toEqual([A]);
+    expect(s.paused).toEqual({ [B]: { since: "2026-11-04", why: "out" } });
+    expect(s.periods[4].required).toEqual([A]);
+    expect(s.streak).toBe(5);
   });
 
   it("only yesterday can be made up", () => {
     // Nov 3 and Nov 4 both missed by B: Nov 3 is a plain miss, Nov 4 is late
     const checks = [...ci(A, ...range("2026-11-01", 4)), ...ci(B, "2026-11-01", "2026-11-02")];
     const s = computePactState(daily, both, checks, [], "2026-11-05");
-    expect(s.periods[2].status).toBe("missed");
+    expect(s.periods[2].status).toBe("frozen");
     expect(s.periods[3].status).toBe("late");
-    expect(s.streak).toBe(0);
-    expect(s.repair).toEqual({ periods: ["2026-11-03", "2026-11-04"], previous: 2 });
+    expect(s.streak).toBe(3);
+    expect(s.repair).toEqual({ periods: ["2026-11-04"], previous: 3 });
   });
 
-  it("offers the freeze for the older miss even when there aren't enough for both", () => {
-    const pact = { ...daily, freezes_allowed: 1 };
+  it("an older miss with no freezes left pauses them, and yesterday no longer waits on them", () => {
+    const pact = { ...daily, freezes_allowed: 0 };
     const checks = [...ci(A, ...range("2026-11-01", 4)), ...ci(B, "2026-11-01", "2026-11-02")];
     const s = computePactState(pact, both, checks, [], "2026-11-05");
-    expect(s.repair?.periods).toEqual(["2026-11-03", "2026-11-04"]);
-    // freeze Nov 3, then make up Nov 4
-    const after = computePactState(pact, both, [...checks, { user_id: B, day: "2026-11-04", made_up: true }], ["2026-11-03"], "2026-11-05");
-    expect(after.streak).toBe(4);
+    expect(s.periods[2].status).toBe("done");
+    expect(s.periods[2].required).toEqual([A]);
+    expect(s.paused[B]).toEqual({ since: "2026-11-03", why: "out" });
+    expect(s.late).toBeNull();
+    expect(s.streak).toBe(4);
   });
 
   it("no freeze on offer when none are left; making up is still possible", () => {
@@ -300,12 +336,12 @@ describe("make-up day", () => {
     expect(s.late?.start).toBe("2026-11-04");
   });
 
-  it("calling it a miss breaks it now, and a freeze can still patch it", () => {
+  it("calling it a miss settles it now, with their own freeze", () => {
     const s = computePactState(daily, both, base, [], "2026-11-05", [{ user_id: B, day: "2026-11-04" }]);
-    expect(s.periods[3].status).toBe("missed");
+    expect(s.periods[3].status).toBe("frozen");
     expect(s.late).toBeNull();
-    expect(s.streak).toBe(0);
-    expect(s.repair).toEqual({ periods: ["2026-11-04"], previous: 3 });
+    expect(s.streak).toBe(4);
+    expect(s.freezesLeftBy[B]).toBe(2);
   });
 
   it("an old miss call doesn't affect anything", () => {
@@ -367,21 +403,33 @@ describe("weekly pacts", () => {
   it("a week short by two can't be made up", () => {
     const checks = [...ci(A, "2026-11-01", "2026-11-03", "2026-11-05"), ...ci(B, "2026-11-01")];
     const s = computePactState(weekly, both, checks, [], "2026-11-08");
-    expect(s.periods[0].status).toBe("missed");
+    expect(s.periods[0].status).toBe("frozen");
     expect(s.late).toBeNull();
   });
 
   it("a week where the short member already logged Sunday can't be made up", () => {
     const checks = [...ci(A, "2026-11-01", "2026-11-03", "2026-11-05"), ...ci(B, "2026-11-01", "2026-11-07")];
     const s = computePactState(weekly, both, checks, [], "2026-11-08");
-    expect(s.periods[0].status).toBe("missed");
+    expect(s.late).toBeNull();
+    expect(s.periods[0].status).toBe("frozen");
   });
 
-  it("a short week falls short and gets offered a freeze", () => {
+  it("a week everyone falls short of uses everyone's own freeze, and nobody is paused", () => {
     const wk1 = ["2026-11-01", "2026-11-03", "2026-11-05"];
     const s = computePactState(weekly, both, [...ci(A, ...wk1, "2026-11-08"), ...ci(B, ...wk1)], [], "2026-11-15");
-    expect(s.periods[1].status).toBe("missed");
-    expect(s.repair).toEqual({ periods: ["2026-11-08"], previous: 1 });
+    expect(s.periods[1].status).toBe("frozen");
+    expect(s.autoFreezes).toHaveLength(2);
+    expect(s.paused).toEqual({});
+    expect(s.streak).toBe(2);
+  });
+
+  it("one silent week and you're paused from the next", () => {
+    const wk1 = ["2026-11-01", "2026-11-03", "2026-11-05"];
+    const wk2 = ["2026-11-08", "2026-11-09", "2026-11-10"];
+    const s = computePactState(weekly, both, [...ci(A, ...wk1, ...wk2), ...ci(B, ...wk1)], [], "2026-11-16");
+    expect(s.periods[1].status).toBe("frozen");
+    expect(s.paused).toEqual({ [B]: { since: "2026-11-15", why: "quiet" } });
+    expect(s.current?.required).toEqual([A]);
   });
 });
 
@@ -417,16 +465,18 @@ describe("everyone has their own freezes", () => {
     expect(fromB.stuck).toEqual([B]);
   });
 
-  it("nobody has one to give: no repair, the chain breaks", () => {
+  it("nobody has one to give: past midnight they're paused and the chain carries on", () => {
     const spent = [
       { period_start: "2026-10-20", paid_by: A, covers: A },
       { period_start: "2026-10-21", paid_by: B, covers: B },
     ];
     const s = computePactState(pact, both, checks, spent, "2026-11-05");
     expect(s.repair).toBeNull();
-    // making it up is still possible; past midnight it breaks
+    // making it up is still possible today
     expect(s.periods[3].status).toBe("late");
-    expect(computePactState(pact, both, checks, spent, "2026-11-06").periods[3].status).toBe("missed");
+    const after = computePactState(pact, both, checks, spent, "2026-11-06");
+    expect(after.periods[3].status).toBe("done");
+    expect(after.paused[B]).toEqual({ since: "2026-11-04", why: "out" });
   });
 
   it("both missed: each pays their own", () => {
@@ -444,6 +494,70 @@ describe("everyone has their own freezes", () => {
     const s = computePactState(pact, both, checks, [{ period_start: "2026-11-04", paid_by: A }], "2026-11-05");
     expect(s.periods[3].status).toBe("frozen");
     expect(s.freezesLeftBy).toEqual({ [A]: 0, [B]: 1 });
+  });
+});
+
+describe("three quiet days and you're paused", () => {
+  // A keeps every day; B checks in Nov 1-3, then goes quiet
+  const aAll = (n: number) => ci(A, ...range("2026-11-01", n));
+
+  it("the quiet days use their freezes, then they're paused from day 4", () => {
+    const s = computePactState(daily, both, [...aAll(7), ...ci(B, ...range("2026-11-01", 3))], [], "2026-11-08");
+    expect(s.periods.slice(3, 6).map((p) => p.status)).toEqual(["frozen", "frozen", "frozen"]);
+    expect(s.paused).toEqual({ [B]: { since: "2026-11-07", why: "quiet" } });
+    expect(s.periods[6].required).toEqual([A]);
+    expect(s.freezesLeftBy[B]).toBe(0);
+    expect(s.streak).toBe(7);
+  });
+
+  it("a check-in brings them back from that day", () => {
+    const s = computePactState(daily, both, [...aAll(9), ...ci(B, ...range("2026-11-01", 3), "2026-11-09")], [], "2026-11-09");
+    expect(s.paused).toEqual({});
+    expect(s.countsFrom[B]).toBe("2026-11-09");
+    expect(s.periods[7].required).toEqual([A]);
+    expect(s.current?.required).toEqual([A, B]);
+    expect(s.current?.status).toBe("done");
+  });
+
+  it("days off don't count as quiet and don't reset the count", () => {
+    // Nov 6 is a Friday, a day off
+    const fridays = { ...daily, rest_days: 1 << 5 };
+    const s = computePactState(fridays, both, [...ci(A, "2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-07", "2026-11-08"), ...ci(B, "2026-11-01", "2026-11-02", "2026-11-03")], [], "2026-11-09");
+    expect(s.periods[5].rest).toBe(true);
+    expect(s.paused[B]).toEqual({ since: "2026-11-08", why: "quiet" });
+  });
+
+  it("nobody is paused when everyone goes quiet", () => {
+    const s = computePactState(daily, both, [...ci(A, "2026-11-01"), ...ci(B, "2026-11-01")], [], "2026-11-07");
+    expect(s.paused).toEqual({});
+    // 3 freezes each cover Nov 2-4, then it breaks
+    expect(s.periods.slice(1, 5).map((p) => p.status)).toEqual(["frozen", "frozen", "frozen", "missed"]);
+  });
+
+  it("a pact nobody has ever checked in to spends no freezes", () => {
+    const s = computePactState(daily, both, [], [], "2026-11-06");
+    expect(s.autoFreezes).toEqual([]);
+    expect(s.freezesLeftBy).toEqual({ [A]: 3, [B]: 3 });
+    expect(s.periods[1].status).toBe("missed");
+  });
+
+  it("the live case: one check-in, three quiet days, paused once the third has closed", () => {
+    const C = "c";
+    const F = "f";
+    const members = [{ user_id: A, joined_on: "2026-11-06" }, { user_id: F, joined_on: "2026-11-07" }, { user_id: C, joined_on: "2026-11-13" }];
+    const pact: PactCore = { cadence: "daily", times_per_week: 7, duration_days: 90, start_date: "2026-11-07", freezes_allowed: 9 };
+    const checks = [...ci(A, ...range("2026-11-07", 12)), ...ci(F, ...range("2026-11-07", 13)), ...ci(C, "2026-11-15")];
+    // today (the 19th): the 18th can still be made up, so it waits on C until midnight
+    const today = computePactState(pact, members, checks, [], "2026-11-19");
+    expect(today.streak).toBe(11);
+    expect(today.late?.owing).toEqual([C]);
+    // tomorrow: the 18th is frozen with C's freeze and C is paused from the 19th
+    const s = computePactState(pact, members, [...checks, ...ci(A, "2026-11-19")], [], "2026-11-20");
+    expect(s.streak).toBe(13);
+    expect(s.paused).toEqual({ [C]: { since: "2026-11-19", why: "quiet" } });
+    expect(s.freezesLeftBy[C]).toBe(6);
+    expect(s.current?.required).toEqual([A, F]);
+    expect(s.autoFreezes.map((x) => x.period)).toEqual(["2026-11-16", "2026-11-17", "2026-11-18"]);
   });
 });
 
@@ -467,15 +581,23 @@ describe("break pacts", () => {
     expect(s.current?.status).toBe("open");
   });
 
-  it("giving in today loses today right away and resets the streak", () => {
+  it("giving in today uses your own freeze right away", () => {
     const days = range("2026-11-01", 3);
     const s = computePactState(quit, both, [...ci(A, ...days), ...ci(B, ...days)], [], "2026-11-04", [slip(A, "2026-11-04")]);
-    expect(s.current?.status).toBe("missed");
+    expect(s.current?.status).toBe("frozen");
     expect(s.current?.slips[A]).toBe(1);
-    expect(s.streak).toBe(0);
-    expect(s.best).toBe(3);
-    // and a freeze can save it today
-    expect(s.repair).toEqual({ periods: ["2026-11-04"], previous: 3 });
+    expect(s.streak).toBe(4);
+    expect(s.freezesLeftBy[A]).toBe(2);
+    expect(s.repair).toBeNull();
+  });
+
+  it("giving in today with no freezes pauses you, and today stays open for the others", () => {
+    const days = range("2026-11-01", 3);
+    const s = computePactState({ ...quit, freezes_allowed: 0 }, both, [...ci(A, ...days), ...ci(B, ...days)], [], "2026-11-04", [slip(A, "2026-11-04")]);
+    expect(s.current?.status).toBe("open");
+    expect(s.current?.required).toEqual([B]);
+    expect(s.paused[A]).toEqual({ since: "2026-11-04", why: "out" });
+    expect(s.streak).toBe(3);
   });
 
   it("a frozen slip today keeps the streak going", () => {
@@ -486,12 +608,12 @@ describe("break pacts", () => {
     expect(s.repair).toBeNull();
   });
 
-  it("giving in yesterday is a miss, not something to make up", () => {
+  it("giving in yesterday is settled with your freeze, not something to make up", () => {
     const days = range("2026-11-01", 3);
     const s = computePactState(quit, both, [...ci(A, ...days), ...ci(B, ...days), ...ci(A, "2026-11-04")], [], "2026-11-05", [slip(B, "2026-11-04")]);
-    expect(s.periods[3].status).toBe("missed");
+    expect(s.periods[3].status).toBe("frozen");
     expect(s.late).toBeNull();
-    expect(s.streak).toBe(0);
+    expect(s.streak).toBe(4);
   });
 
   it("an unanswered yesterday is still open until midnight", () => {
@@ -512,10 +634,11 @@ describe("break pacts", () => {
       expect(s.current?.slips[A]).toBe(2);
     });
 
-    it("one day over the allowance breaks the week straight away", () => {
-      const slips = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"].map((d) => slip(A, d));
-      const s = computePactState(sugar, both, [], [], "2026-11-05", slips);
-      expect(s.current?.status).toBe("missed");
+    it("one day over the allowance settles the week straight away, with your freeze", () => {
+      const slips = ["2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"].map((d) => slip(A, d));
+      const s = computePactState(sugar, both, [...ci(A, "2026-11-02"), ...ci(B, "2026-11-02")], [], "2026-11-06", slips);
+      expect(s.current?.status).toBe("frozen");
+      expect(s.freezesLeftBy[A]).toBe(0);
     });
 
     it("closes once everyone has their days off it", () => {
@@ -541,7 +664,10 @@ describe("break pacts", () => {
         "2026-11-03",
       );
       expect(s.periods[0].status).toBe("done");
-      expect(s.periods[1].status).toBe("missed");
+      // a solo pact: an over-the-limit day uses your freeze, or breaks the chain when you have none
+      expect(s.periods[1].status).toBe("frozen");
+      const none = computePactState({ ...coffee, freezes_allowed: 0 }, [both[0]], [{ user_id: A, day: "2026-11-01", value: 2 }, { user_id: A, day: "2026-11-02", value: 3 }], [], "2026-11-03");
+      expect(none.periods[1].status).toBe("missed");
     });
 
     it("the limit goes down each week when asked to", () => {

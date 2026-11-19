@@ -26,7 +26,7 @@ describe("seriesIds", () => {
 describe("buildSeries", () => {
   const me = "u1";
   const round = (id: string, n: number, start: string, keptDays: number, value: (i: number) => number) => {
-    const pact = { id, round: n, start_date: start, direction: "up" as const, cadence: "daily" as const, times_per_week: 7, duration_days: 10, freezes_allowed: 1 };
+    const pact = { id, round: n, start_date: start, direction: "up" as const, cadence: "daily" as const, times_per_week: 7, duration_days: 10, freezes_allowed: 0 };
     const checkins = Array.from({ length: keptDays }, (_, i) => ({ user_id: me, day: addDays(start, i), value: value(i) }));
     const state = computePactState(pact, [{ user_id: me, joined_on: start }], checkins, [], addDays(start, 40));
     return { pact, state, checkins };

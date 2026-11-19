@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PactBundle } from "./data";
 import { addDays, type Day } from "./dates";
 import { computePactState, type Cadence } from "./streak";
-import { breakTitle, chainCountsText, inviteText, isStarting, pactName, statusLine } from "./view";
+import { breakTitle, chainCountsText, inviteText, isStarting, missOutcome, pactName, statusLine } from "./view";
 
 const A = "a";
 const B = "b";
@@ -164,5 +164,26 @@ describe("inviteText", () => {
       expect(text).toBe("🔥 Join my pact. Let's not break the chain.");
     }
     expect(inviteText({ title: "", emoji: "" })).toBe("Join my pact. Let's not break the chain.");
+  });
+});
+
+describe("paused after 3 quiet days", () => {
+  // B checked in Nov 1-6, then went quiet on the 7th, 8th and 9th. It's the 11th and A has checked in.
+  const b = bundle({ cadence: "daily", start: "2026-11-01", days: 30, today: "2026-11-11", bJoinedOn: "2026-11-01" });
+  const ci = (user_id: string, day: string) => ({ id: `${user_id}${day}`, pact_id: "p", user_id, day, value: null, note: null, feel: null, made_up: false, created_at: "" });
+  for (let d = "2026-11-01"; d <= "2026-11-06"; d = addDays(d, 1)) b.checkins.push(ci(B, d) as never);
+  b.checkins.push(ci(A, "2026-11-11") as never);
+  b.state = computePactState({ ...b.pact, freezes_allowed: 3 }, b.members, b.checkins, [], "2026-11-11");
+
+  it("is paused from the 10th, and the others see it", () => {
+    expect(b.state.paused[B]).toEqual({ since: "2026-11-10", why: "quiet" });
+    expect(statusLine(b, B)).toEqual({ text: "You're paused after 3 quiet days. Check in to jump back in.", tone: "info" });
+    expect(statusLine(b, A).text).toBe("Done for today. Sam is paused.");
+    expect(chainCountsText(b, B, "them")).toBe("The chain counts them again from their next check-in");
+  });
+
+  it("says what a miss would do", () => {
+    expect(missOutcome(b, A)).toBe("One of your freezes covers it, so the streak keeps going. You'll have 2 left.");
+    expect(missOutcome(b, B)).toBe("You're out of freezes, so you're paused and the chain carries on without you. Check in any day to jump back in.");
   });
 });
