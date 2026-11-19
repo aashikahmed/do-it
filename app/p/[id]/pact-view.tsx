@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { applyFreeze, askForHelp, callMiss, checkIn, leavePact, nudge, saveCravingPlan, startNextRound, undoCheckIn, updateCheckIn } from "@/lib/client-actions";
+import { applyFreeze, askForHelp, callMiss, checkIn, leavePact, nudge, saveCravingPlan, startNextRound, undoCheckIn } from "@/lib/client-actions";
 import { Avatar } from "@/components/avatar";
 import { HeartRow } from "@/components/hearts";
 import { Burst } from "@/components/burst";
@@ -17,7 +17,7 @@ import { Sheet } from "@/components/sheet";
 import { ShareInvite } from "@/components/share-invite";
 import { toast } from "@/components/toast";
 import type { Checkin, Me, PactBundle } from "@/lib/data";
-import { addDays, diffDays, formatDay, todayIn } from "@/lib/dates";
+import { addDays, diffDays, formatDay } from "@/lib/dates";
 import {
   allowedDays,
   answerOn,
@@ -43,7 +43,9 @@ import { useViewerTimeZone } from "@/components/time-zone";
 import { FEELS, formatAvg, formatValue, isBetter, progressStats, targetText, type Feel, type Tracking } from "@/lib/measure";
 import { keptCount, type Series } from "@/lib/rounds";
 import { logAvatarTap } from "@/lib/track";
-import { FeelPicker, ValueInput } from "@/components/measure-input";
+import { ValueInput } from "@/components/measure-input";
+import { Activity } from "./activity";
+import { EditSheet, EntryFields } from "./entry";
 import { ProgressView } from "@/components/progress-view";
 
 export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Series | null }) {
@@ -699,89 +701,6 @@ function LogForm({
         />
       </div>
     </>
-  );
-}
-
-function EntryFields({
-  t,
-  value,
-  setValue,
-  feel,
-  setFeel,
-  note,
-  setNote,
-}: {
-  t: Tracking;
-  value: number | null;
-  setValue: (v: number | null) => void;
-  feel: Feel | null;
-  setFeel: (v: Feel | null) => void;
-  note: string;
-  setNote: (v: string) => void;
-}) {
-  return (
-    <div className="space-y-3">
-      {t.measure !== "none" && (
-        <div className="rounded-2xl bg-mist/60 p-2">
-          <ValueInput t={t} value={value} onChange={setValue} size="md" />
-        </div>
-      )}
-      <FeelPicker value={feel} onChange={setFeel} />
-      <textarea
-        rows={3}
-        maxLength={280}
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        placeholder="Anything to remember? (optional)"
-        aria-label="Note"
-        className="w-full resize-none rounded-2xl bg-mist px-4 py-3 text-[16px] outline-none focus:ring-2 focus:ring-[var(--pact)]"
-      />
-    </div>
-  );
-}
-
-function EditSheet({ b, c, open, onClose }: { b: PactBundle; c: Checkin; open: boolean; onClose: () => void }) {
-  const [value, setValue] = useState<number | null>(c.value);
-  const [feel, setFeel] = useState<Feel | null>(c.feel);
-  const [note, setNote] = useState(c.note ?? "");
-  const [busy, setBusy] = useState(false);
-  const [confirmUndo, setConfirmUndo] = useState(false);
-  const router = useRouter();
-
-  async function save() {
-    setBusy(true);
-    const res = await updateCheckIn({ pactId: b.pact.id, day: c.day, value: b.pact.measure !== "none" ? value : null, note: note.trim() || null, feel });
-    setBusy(false);
-    if (!res.ok) return toast(res.error, "error");
-    toast("Saved");
-    onClose();
-    router.refresh();
-  }
-
-  async function undo() {
-    setBusy(true);
-    const res = await undoCheckIn({ pactId: b.pact.id, day: c.day });
-    setBusy(false);
-    if (!res.ok) return toast(res.error, "error");
-    toast("Check-in removed");
-    onClose();
-    router.refresh();
-  }
-
-  return (
-    <Sheet open={open} onClose={onClose} title="Today's check-in">
-      <EntryFields t={b.pact} value={value} setValue={setValue} feel={feel} setFeel={setFeel} note={note} setNote={setNote} />
-      <button disabled={busy} onClick={save} className="mt-4 h-14 w-full rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-50">
-        Save
-      </button>
-      <button
-        disabled={busy}
-        onClick={() => (confirmUndo ? undo() : setConfirmUndo(true))}
-        className={`mt-2 h-14 w-full rounded-2xl text-[16px] font-bold ${confirmUndo ? "bg-ember text-white" : "text-ember"}`}
-      >
-        {confirmUndo ? "Tap again to remove it" : "Remove check-in"}
-      </button>
-    </Sheet>
   );
 }
 
@@ -1445,63 +1364,6 @@ function SoloInvite({ b }: { b: PactBundle }) {
       />
     </section>
   );
-}
-
-// ───────────────────────── activity ─────────────────────────
-
-function Activity({ b, me }: { b: PactBundle; me: Me }) {
-  const items = b.checkins.slice(0, 20);
-  if (!items.length) return null;
-  const name = (id: string) => b.allMembers.find((m) => m.user_id === id)?.name ?? "Former member";
-  const when = (d: string) => (d === b.today ? "Today" : d === b.yesterday ? "Yesterday" : formatDay(d));
-
-  return (
-    <section className="rounded-[24px] bg-paper p-2">
-      <h2 className="px-3 pt-3 pb-1 text-[17px] font-extrabold">Activity</h2>
-      <ul>
-        {items.map((c) => (
-          <HeartRow key={c.id} b={b} me={me} c={c} className="flex gap-3 px-3 py-3">
-            {(hearts) => (
-              <>
-                <Avatar
-                  id={c.user_id}
-                  name={name(c.user_id)}
-                  src={b.allMembers.find((m) => m.user_id === c.user_id)?.avatar_url}
-                  size={34}
-                  onTap={c.user_id === me.id ? undefined : () => logAvatarTap(b.pact.id, c.user_id)}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[15px]">
-                    <b>{firstName(name(c.user_id))}</b>{" "}
-                    <span className="text-ink-2">
-                      {activityLine(c, b)}
-                      {c.feel ? `, felt ${FEELS[c.feel - 1].label.toLowerCase()}` : ""}
-                    </span>
-                  </p>
-                  {c.note && <p className="mt-0.5 text-[15px] leading-snug break-words">{c.note}</p>}
-                  {hearts}
-                </div>
-                <span className="shrink-0 pt-0.5 text-[13px] font-medium text-ink-3">{when(c.day)}</span>
-              </>
-            )}
-          </HeartRow>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-/** "checked in", "did 5 km", plus how a check-in for an earlier day was logged */
-function activityLine(c: Checkin, b: PactBundle) {
-  const did = c.value !== null && b.pact.measure !== "none" ? formatValue(b.pact, c.value) : null;
-  if (b.pact.kind === "break") {
-    const next = todayIn(b.pact.timezone, new Date(c.created_at)) > c.day ? ", answered the next day" : "";
-    return `${did ? `had ${did}` : "stayed off it"}${next}`;
-  }
-  if (c.made_up) return did ? `made it up, did ${did}` : "made it up";
-  const late = todayIn(b.pact.timezone, new Date(c.created_at)) > c.day;
-  if (late) return did ? `did ${did}, logged late` : "checked in late";
-  return did ? `did ${did}` : "checked in";
 }
 
 // ───────────────────────── recap ─────────────────────────
