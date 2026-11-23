@@ -7,7 +7,8 @@ import { easeOut, useRun } from "./use-run";
 
 /**
  * Your lanes: one lane per person on a running track, in the pact's own colors. Every time the pact opens, the runners
- * leave their (staggered) start lines and run to today, painting their lanes as they go. The finish line is the last day.
+ * leave the line together and run to today, painting their lanes as they go. One lap is the whole pact: everyone starts
+ * and finishes on the same line, and people on the same day stand side by side whatever their lane.
  */
 
 const ICE = "#8FD3FF";
@@ -77,23 +78,23 @@ export function TrackLanes({ model, unit = "day" }: { model: LanesModel; unit?: 
   const RIN = 42;
   const ROUT = RIN + n * lw;
   const T = useMemo(() => oval(160, 100, 60), []);
-  const L0 = T.length(RIN + lw / 2);
+  const REF = RIN + (n * lw) / 2;
   const { total } = model;
+  /** day `d` of the pact as a distance along lane R */
+  const S = (d: number, R: number) => T.at(d / Math.max(1, total), R, REF);
 
   const geo = useMemo(
     () =>
       model.lanes.map((lane, k) => {
         const R = RIN + (k + 0.5) * lw;
-        const st = T.length(R) - L0;
         return {
           R,
-          st,
-          lane: T.path(st, st + L0 + 18, R),
-          segs: lane.segs.map((s) => ({ d: T.path(st + (L0 * s.from) / total, st + (L0 * s.to) / total, R), ...strokeFor(s.mark, lane) })),
-          start: [T.pt(st, R - lw / 2), T.pt(st, R + lw / 2)] as const,
+          lane: T.path(0, T.length(R) + 18, R),
+          segs: lane.segs.map((s) => ({ d: T.path(S(s.from, R), S(s.to, R), R), ...strokeFor(s.mark, lane) })),
         };
       }),
-    [model.lanes, T, L0, lw, total],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- S only reads T, REF and total
+    [model.lanes, T, REF, lw, total],
   );
   const track = useMemo(() => ({ out: T.full(ROUT), inner: T.full(RIN), lines: Array.from({ length: n + 1 }, (_, k) => T.full(RIN + k * lw)) }), [T, ROUT, n, lw]);
 
@@ -130,11 +131,10 @@ export function TrackLanes({ model, unit = "day" }: { model: LanesModel; unit?: 
       {geo.map((g, k) => {
         const lane = model.lanes[k];
         const v = run.values[k] ?? 0;
-        const revealed = (L0 * v) / total + (model.finished ? 18 * finishing : 0);
+        const revealed = S(v, g.R) + (model.finished ? 18 * finishing : 0);
         const doneToday = lane.pos > model.today;
         return (
           <g key={lane.userId}>
-            <line x1={r1(g.start[0][0])} y1={r1(g.start[0][1])} x2={r1(g.start[1][0])} y2={r1(g.start[1][1])} stroke={lane.color} strokeWidth={run.pre ? 4 : 2.2} strokeLinecap="round" />
             <mask id={`${uid}-m${k}`} maskUnits="userSpaceOnUse" x={0} y={0} width={320} height={200}>
               <path d={g.lane} fill="none" stroke="#fff" strokeWidth={lw + 1} strokeDasharray={`${r1(Math.max(0.01, revealed))} 99999`} />
             </mask>
@@ -146,7 +146,7 @@ export function TrackLanes({ model, unit = "day" }: { model: LanesModel; unit?: 
             {!model.finished && !doneToday && run.post > 0 && (
               <path
                 className="link-open"
-                d={T.path(g.st + (L0 * model.today) / total, g.st + (L0 * Math.min(total, model.today + 1)) / total, g.R)}
+                d={T.path(S(model.today, g.R), S(Math.min(total, model.today + 1), g.R), g.R)}
                 fill="none"
                 stroke={lane.color}
                 strokeOpacity={0.75 * run.post}
@@ -160,7 +160,7 @@ export function TrackLanes({ model, unit = "day" }: { model: LanesModel; unit?: 
 
       {geo.map((g, k) => {
         const lane = model.lanes[k];
-        const s = g.st + (L0 * (run.values[k] ?? 0)) / total + (model.finished ? 16 * finishing : 0);
+        const s = S(run.values[k] ?? 0, g.R) + (model.finished ? 16 * finishing : 0);
         const [x, y] = T.pt(s, g.R);
         const [bx, by] = T.pt(s - 4, g.R);
         return <Runner key={lane.userId} lane={lane} x={x} y={y} angle={Math.atan2(y - by, x - bx)} speed={run.speed} uid={uid} k={k} />;
