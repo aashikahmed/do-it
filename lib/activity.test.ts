@@ -107,6 +107,86 @@ describe("activity: break and weekly pacts", () => {
   });
 });
 
+describe("activity: your own days with nothing logged", () => {
+  // A checks in Nov 1-3, then nothing; B every day. No freezes, so A's Nov 4 miss pauses them from then on.
+  const pact: PactCore = { ...daily, freezes_allowed: 0 };
+  const today = "2026-11-10";
+  const checkins = [...ci(A, range("2026-11-01", 3)), ...ci(B, range("2026-11-01", 9))];
+  const view = (p: PactCore, c: ActivityCheckin[], t: string, who: string) => {
+    const state = computePactState(p, both, c, [], t, []);
+    return activityDays({ pact: p, state, checkins: c, misses: [], freezes: [], changes: [], today: t, me: { id: who, joined_on: "2026-11-01" } });
+  };
+  const gaps = (out: ReturnType<typeof feed>) => out.flatMap((d) => d.rows.filter((r) => r.type === "gap"));
+
+  it("a paused stretch is one row on its last day, not counting yesterday", () => {
+    const out = view(pact, checkins, today, A);
+    expect(gaps(out)).toEqual([
+      { type: "gap", key: `g:${A}|2026-11-05`, user: A, day: "2026-11-08", start: "2026-11-05", days: range("2026-11-05", 4) },
+    ]);
+    // Nov 4 keeps its "didn't check in" row
+    expect(rowsOn(out, "2026-11-04").find((r) => r.user === A)).toMatchObject({ type: "miss", said: false });
+  });
+
+  it("only you see your empty days", () => {
+    expect(gaps(view(pact, checkins, today, B))).toEqual([]);
+    expect(gaps(feed(pact, checkins, today))).toEqual([]);
+  });
+
+  it("days before your first check-in count too", () => {
+    const out = view(pact, ci(B, range("2026-11-01", 9)), today, A);
+    expect(gaps(out).map((g) => g.type === "gap" && g.days)).toEqual([range("2026-11-01", 8)]);
+  });
+
+  it("a day off inside a run is skipped without splitting it", () => {
+    // Nov 6 2026 is a Friday (bit 5)
+    const out = view({ ...pact, rest_days: 1 << 5 }, checkins, today, A);
+    expect(gaps(out).map((g) => g.type === "gap" && g.days)).toEqual([["2026-11-05", "2026-11-07", "2026-11-08"]]);
+  });
+
+  it("weekly pacts: the open week's empty days, until you've met it", () => {
+    const weekly: PactCore = { cadence: "weekly", times_per_week: 3, duration_days: 28, start_date: "2026-11-01", freezes_allowed: 1 };
+    const wk1 = ["2026-11-01", "2026-11-02", "2026-11-03"];
+    const open = view(weekly, [...ci(A, [...wk1, "2026-11-08"]), ...ci(B, [...wk1, "2026-11-08"])], "2026-11-12", A);
+    expect(gaps(open).map((g) => g.type === "gap" && g.days)).toEqual([["2026-11-09", "2026-11-10"]]);
+    const met = view(weekly, [...ci(A, [...wk1, ...range("2026-11-08", 3)]), ...ci(B, wk1)], "2026-11-12", A);
+    expect(gaps(met)).toEqual([]);
+  });
+
+  it("filling in a paused day says the days after it count again", () => {
+    const x: DayInputs = { pact, members: both, checkins, misses: [], freezes: [], today };
+    const before = computePactState(pact, both, checkins, [], today, []);
+    const p = previewDay(x, A, "2026-11-06", true, null, false);
+    expect(changeText(before, p, A, "2026-11-06", "Friday", "day")).toEqual({
+      text: "Friday counts with you in it. Saturday counts for you now too. Fill it in, or you'll be paused.",
+      tone: "warn",
+    });
+    // the last day before yesterday: back in, and yesterday is yours to log
+    const last = previewDay(x, A, "2026-11-08", true, null, false);
+    expect(changeText(before, last, A, "2026-11-08", "Sunday", "day").text).toBe(
+      "Sunday counts with you in it. You're back in the chain. Yesterday counts for you now too. Fill it in.",
+    );
+  });
+
+  it("a refunded freeze isn't counted twice when the days after it spend it", () => {
+    const withFreezes: PactCore = { ...daily, freezes_allowed: 3 };
+    const x: DayInputs = { pact: withFreezes, members: both, checkins, misses: [], freezes: [], today };
+    const before = computePactState(withFreezes, both, checkins, [], today, []);
+    const p = previewDay(x, A, "2026-11-04", true, null, false);
+    expect(changeText(before, p, A, "2026-11-04", "Wednesday", "day").text).toBe(
+      "Wednesday is kept on its own, so your freeze comes back. You'll have 1. Saturday counts for you now too. Fill it in, or it'll use your last freeze and you'll be paused.",
+    );
+  });
+
+  it("a day in the open week says where you are in it", () => {
+    const weekly: PactCore = { cadence: "weekly", times_per_week: 3, duration_days: 28, start_date: "2026-11-01", freezes_allowed: 1 };
+    const c = [...ci(A, ["2026-11-01", "2026-11-02", "2026-11-03", "2026-11-08"]), ...ci(B, ["2026-11-01", "2026-11-02", "2026-11-03"])];
+    const x: DayInputs = { pact: weekly, members: both, checkins: c, misses: [], freezes: [], today: "2026-11-12" };
+    const before = computePactState(weekly, both, c, [], "2026-11-12", []);
+    const p = previewDay(x, A, "2026-11-09", true, null, false);
+    expect(changeText(before, p, A, "2026-11-09", "That week", "week")).toEqual({ text: "You're on 2 of 3 this week.", tone: "plain" });
+  });
+});
+
 describe("which days can be changed", () => {
   const me = { joined_on: "2026-11-01", left_on: null };
   it("any day of the round that's over, until a week after it ends", () => {
