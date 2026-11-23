@@ -43,7 +43,8 @@ import {
   subjectOf,
 } from "@/lib/view";
 import { limitOn, type Period } from "@/lib/streak";
-import { dayName, daysNeeded, weekAtRisk, weekNote, weekOutlook, weekRange } from "@/lib/week";
+import { dayName, daysNeeded, weekAtRisk, weekDays, weekNote, weekOutlook, weekRange } from "@/lib/week";
+import { WeekDots, WeekLetters } from "@/components/week-strip";
 import { deadlineText, pactDeadline, tzFor } from "@/lib/reminders";
 import { useViewerTimeZone } from "@/components/time-zone";
 import { FEELS, formatAvg, formatValue, isBetter, progressStats, targetText, type Feel, type Tracking } from "@/lib/measure";
@@ -142,8 +143,8 @@ function Hero({ b, me, onMenu, onCelebrate }: { b: PactBundle; me: Me; onMenu: (
   const unit = pact.cadence === "daily" ? "day" : "week";
   const isBreak = pact.kind === "break";
   const lanes = useMemo(
-    () => (isBreak ? null : buildLanes({ pact, state, members: b.members, me: me.id, today: b.today })),
-    [isBreak, pact, state, b.members, me.id, b.today],
+    () => (isBreak ? null : buildLanes({ pact, state, members: b.members, me: me.id, today: b.today, checkins: b.checkins })),
+    [isBreak, pact, state, b.members, me.id, b.today, b.checkins],
   );
   const tokens = useMemo(
     () => (isBreak ? buildTokens({ pact, phase: state.phase, userId: me.id, checkins: b.checkins, misses: b.misses, today: b.today }) : null),
@@ -255,6 +256,7 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
   // paused people sit at the bottom under their own heading; a check-in brings them straight back
   const pausedNow = (id: string) => state.phase === "active" && isPaused(b, id) && !todaysOf(id);
   const active = members.filter((m) => !pausedNow(m.user_id));
+  const letters = pact.kind !== "break" ? weekDays(b, me.id) : null;
   const paused = members.filter((m) => pausedNow(m.user_id));
 
   function row(m: (typeof members)[number]) {
@@ -282,6 +284,8 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
     let sub: string | null = null;
     // weekly build pacts: where they stand in the week (what's left, and what the week's end brings)
     const week = !isBreak && !starting && !isPausedNow ? weekOutlook(b, m.user_id) : null;
+    // their days this week as dots, under the letters at the top of the list
+    const days = !isBreak && !isPausedNow ? weekDays(b, m.user_id) : null;
     if (state.phase === "upcoming") status = isMe ? "Ready" : `Joined ${formatDay(m.joined_at.slice(0, 10), { day: "numeric", month: "short" })}`;
     else if (isPausedNow) {
       status = why === "out" ? "Out of freezes" : `After ${quietSpan(pact.cadence)}`;
@@ -326,6 +330,7 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
                 {isMe && <span className="font-medium text-ink-3"> (you)</span>}
               </p>
               <p className={`truncate text-[15px] ${done ? "font-semibold text-ink" : "text-ink-2"}`}>{status}</p>
+              {days && <WeekDots week={days} />}
               {sub && <p className={`text-[14px] leading-snug font-semibold ${weekAtRisk(week) ? "text-[#c4381b]" : "text-ink-2"}`}>{sub}</p>}
               {!sub && starting && (
                 <p className="text-[14px] font-semibold text-ink-2">
@@ -363,6 +368,12 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
         {/* weeks start on the pact's own start day, so show which days this one covers */}
         {pact.cadence === "weekly" && cur && state.phase === "active" && <span className="text-[14px] font-semibold text-ink-2">{weekRange(cur.start, cur.end)}</span>}
       </h2>
+      {/* the weekday letters, lined up over everyone's dots (avatar + gap + row padding) */}
+      {letters && (
+        <div className="mt-1 -mb-1 pl-[68px]">
+          <WeekLetters week={letters} />
+        </div>
+      )}
       <ul>{active.map(row)}</ul>
       {paused.length > 0 && (
         <>

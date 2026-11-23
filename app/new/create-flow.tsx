@@ -904,7 +904,7 @@ function LookPreview({ d }: { d: Draft }) {
   return (
     <StraightLanes
       pactId="preview"
-      model={{ total: d.durationDays, today: 0, finished: false, hidden: 0, lanes: [{ userId: "you", name: "You", avatar: null, color, ink: inkOn(color), segs: [], pos: 0, kept: 0 }] }}
+      model={{ total: d.durationDays, today: 0, finished: false, hidden: 0, weekEnds: [], weekEnd: null, lanes: [{ userId: "you", name: "You", avatar: null, color, ink: inkOn(color), segs: [], pos: 0, kept: 0 }] }}
     />
   );
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { addDays, type Day } from "./dates";
 import { computePactState, type PactCore } from "./streak";
-import { daysNeeded, weekAtRisk, weekEndOn, weekEndsText, weekEvening, weekHeadsUp, weekNote, weekOutlook, weekRange } from "./week";
+import { daysNeeded, weekAtRisk, weekDays, weekEndOn, weekEndsText, weekEvening, weekHeadsUp, weekNote, weekOutlook, weekRange } from "./week";
 
 // Hit the gym, 3 times a week for 4 weeks, from Wednesday 11 November: weeks run Wednesday to Tuesday.
 // Week 2 is Wed 18 to Tue 24 November.
@@ -181,5 +181,22 @@ describe("weekly pushes", () => {
     expect(weekEndOn({ start_date: START, duration_days: 28 }, MON)).toBe(TUE);
     expect(weekEndOn({ start_date: START, duration_days: 28 }, W2)).toBe(TUE);
     expect(weekEndOn({ start_date: START, duration_days: 28 }, START)).toBe(addDays(START, 6));
+  });
+});
+
+describe("weekDays", () => {
+  it("lays out the week from the pact's own weekday", () => {
+    const { b } = setup({ today: MON, week2: { [Y]: [1, 5] } });
+    const w = weekDays(b, Y)!;
+    expect(w.days.map((d) => d.letter).join("")).toBe("WTFSSMT");
+    expect(w.days.map((d) => d.mark)).toEqual(["past", "in", "past", "past", "past", "in", "future"]);
+    expect(w.days.find((d) => d.today)!.day).toBe(MON);
+    expect([w.count, w.need]).toEqual([2, 3]);
+    expect(weekDays(setup({ today: MON, week2: {} }).b, J)!.days[5].mark).toBe("open");
+  });
+
+  it("only for weekly build pacts", () => {
+    expect(weekDays(setup({ today: MON, week2: {}, kind: "break" }).b, Y)).toBeNull();
+    expect(weekDays(setup({ today: MON, week2: {}, cadence: "daily" }).b, Y)).toBeNull();
   });
 });

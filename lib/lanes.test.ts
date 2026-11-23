@@ -97,3 +97,35 @@ describe("lanes", () => {
     expect(Array.from({ length: 6 }, (_, i) => laneColor("sun", i))).not.toContain("#FFC23D");
   });
 });
+
+describe("weekly lanes", () => {
+  // 3 a week for 4 weeks from Sunday 1 November: weeks run Sunday to Saturday
+  const weekly: PactCore & { color: string } = { cadence: "weekly", times_per_week: 3, duration_days: 28, start_date: "2026-11-01", freezes_allowed: 1, color: "blue" };
+
+  function weekLanes(checkins: CheckinCore[], today: string) {
+    const state = computePactState(weekly, members, checkins, [], today);
+    return buildLanes({ pact: weekly, state, members: people, me: B, today, checkins });
+  }
+
+  it("marks where each week ends, and the one in progress", () => {
+    const m = weekLanes([], "2026-11-10");
+    expect(m.weekEnds).toEqual([7, 14, 21]);
+    expect(m.weekEnd).toBe(14);
+  });
+
+  it("paints this week's check-ins faintly until the target is hit", () => {
+    const week1 = [...ci(A, "2026-11-01", "2026-11-03", "2026-11-05"), ...ci(B, "2026-11-01", "2026-11-03", "2026-11-05")];
+    const m = weekLanes([...week1, ...ci(B, "2026-11-08", "2026-11-10"), ...ci(A, "2026-11-08", "2026-11-09", "2026-11-10")], "2026-11-10");
+    const bea = m.lanes.find((l) => l.userId === B)!;
+    const ann = m.lanes.find((l) => l.userId === A)!;
+    // Bea: 2 of 3 this week, so the two days she did show faintly
+    expect(bea.segs).toEqual([
+      { from: 0, to: 7, mark: "did" },
+      { from: 7, to: 8, mark: "part" },
+      { from: 9, to: 10, mark: "part" },
+    ]);
+    // Ann hit 3: the week is hers, painted in full up to today
+    expect(ann.segs).toEqual([{ from: 0, to: 10, mark: "did" }]);
+    expect(bea.kept).toBe(1);
+  });
+});

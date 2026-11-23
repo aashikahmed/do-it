@@ -154,6 +154,34 @@ export function weekAtRisk(o: WeekOutlook | null) {
   return !!o && (o.pace === "tight" || (o.pace === "short" && o.ifShort !== "freeze"));
 }
 
+// ── the week, day by day (for the strip on the home card and the dots in the roster) ──
+
+/** in: checked in; past: a day gone by without one; open: today, not yet; future: still to come */
+export type DayMark = "in" | "past" | "open" | "future";
+
+export interface WeekDays {
+  start: Day;
+  end: Day;
+  /** first letter of each weekday, starting on the pact's own weekday: W T F S S M T */
+  days: { day: Day; letter: string; mark: DayMark; today: boolean }[];
+  count: number;
+  need: number;
+}
+
+/** One person's current week, day by day, on a weekly build pact; null otherwise. */
+export function weekDays(b: Pick<Inputs, "pact" | "checkins" | "today"> & { state: Pick<PactState, "phase" | "current" | "need"> }, userId: string): WeekDays | null {
+  if (b.pact.cadence !== "weekly" || b.pact.kind === "break") return null;
+  const cur = b.state.current;
+  if (b.state.phase !== "active" || !cur) return null;
+  const mine = new Set(b.checkins.filter((c) => c.user_id === userId).map((c) => c.day));
+  const days: WeekDays["days"] = [];
+  for (let d = cur.start; d <= cur.end; d = addDays(d, 1)) {
+    const mark: DayMark = mine.has(d) ? "in" : d < b.today ? "past" : d === b.today ? "open" : "future";
+    days.push({ day: d, letter: formatDay(d, { weekday: "narrow" }), mark, today: d === b.today });
+  }
+  return { start: cur.start, end: cur.end, days, count: days.filter((x) => x.mark === "in").length, need: Math.min(b.state.need, days.length) };
+}
+
 // ── pushes (build pacts only; the cron decides when) ──
 
 type Named = { emoji: string; title: string };

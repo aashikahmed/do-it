@@ -49,7 +49,7 @@ Open questions:
 - Could the signed-out landing page show a few as well?
 
 ### Show where the week ends
-Added 2026-11-19, reworked 2026-11-23 · `in progress` (A + C first, then B, then D)
+Added 2026-11-19, reworked 2026-11-23 · `in progress`: A + C shipped in #29, B next, then D
 
 People in weekly pacts can't tell when their week starts or ends. A pact's week starts on its start day (start on a Wednesday and weeks run Wednesday to Tuesday), and nothing on screen says so; most people assume Monday to Sunday. Since #20 the week's end decides whether you lose your own freeze or get paused (one silent week), and #25's "paused at midnight" warning only shows after a week ends, so on 2+ a week pacts it never shows for a quiet week. Proposal with mockups (v2): https://claude.ai/artifact/AQk7KPY3yJbuJgyYJPK1dD
 
