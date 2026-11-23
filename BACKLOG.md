@@ -48,25 +48,20 @@ Open questions:
 - Later: rotating picks ("this week's ideas"), what's popular in the app, seasonal sets (January, exam season).
 - Could the signed-out landing page show a few as well?
 
-### Log a day you forgot
-Added 2026-11-19 · `in progress` (A + B, branch `earlier-days`)
-
-A day you forgot completely often has no Activity row to hold, so it can't be changed: days while you were paused, days before your first check-in, and anything before yesterday in an open week (weekly pacts). `set_day()` already accepts any finished day of the round, so the gap is a way in. Proposal (round 2 is the current one): https://claude.ai/artifact/L6zjhYmSJJJFfMazhZxeGz
-
-- Owner picked A + B (2026-11-23). A: the log sheet gets "Earlier" next to Today and Yesterday, showing your round as a calendar; tap a day for the Change a day form with its preview. Also reachable from "Fill in a day" at the top of Activity, for every pact. B: a catch-up card after 2+ empty days in a row, one day per screen, one preview for all, saved together (new `set_days()` and `previewDays()`).
-- D (Activity rows for your empty days) is built and tested on branch `activity-empty-days` and parked. Its preview lines that warn about later days counting again, and the "Fri 13" date format, carry over.
-
-Decided 2026-11-23: no link in Activity; A lives in the log sheet's Earlier tab and the Progress calendars. B after 3+ empty days, oldest first so it ends at yesterday's make-up. The "some days a week" line ships. A and B in one PR.
-
-Open questions:
-- Break pacts only reach Earlier from today's sheet after 6pm (and Progress any time). Enough?
-- Should D's empty-day rows come back if people still miss days?
-
 ## Deferred
 
 Things we decided not to do yet during other work. None yet.
 
 ## Shipped or dropped
+
+### Log a day you forgot
+Added 2026-11-19 · `shipped` in [#26](https://github.com/aashikahmed/do-it/pull/26)
+
+A day you forgot completely often had no Activity row to hold, so it couldn't be changed. Proposal: https://claude.ai/artifact/L6zjhYmSJJJFfMazhZxeGz. Shipped A + B: the log sheet's Earlier tab and tappable days in your own Progress calendar open the Change a day form; a catch-up card after 3+ empty days in a row (reaching the day before yesterday) asks oldest first, previews all answers together and saves them in one go (`set_days()`). D (Activity rows for empty days) is parked on local branch `activity-empty-days`.
+
+Still open:
+- Break pacts only reach Earlier from today's sheet after 6pm (and Progress any time). Enough?
+- Should D's empty-day rows come back if people still miss days?
 
 ### A fresher look for the chain
 Added 2026-11-19 · `shipped` in [#27](https://github.com/aashikahmed/do-it/pull/27)
