@@ -52,13 +52,7 @@ export type ActivityRow =
   /** said: they told us (a misses row); otherwise they never logged the day */
   | { type: "miss"; key: string; user: string; day: Day; said: boolean; cover: Cover | null; change: DayChange | null }
   /** weekly pacts: a week that ended short. `day` is the week's last day, `start` its first. */
-  | { type: "short"; key: string; user: string; day: Day; start: Day; count: number; need: number; cover: Cover | null }
-  /**
-   * Only for you: a run of your own days with nothing logged that no other row shows (paused, not started yet, or
-   * this week on a weekly pact), so you can still fill them in. `day` is the run's last day, `start` its first, and
-   * `days` the ones you can fill in (days off are skipped without ending the run).
-   */
-  | { type: "gap"; key: string; user: string; day: Day; start: Day; days: Day[] };
+  | { type: "short"; key: string; user: string; day: Day; start: Day; count: number; need: number; cover: Cover | null };
 
 export interface ActivityDay {
   day: Day;
@@ -83,10 +77,8 @@ export function activityDays(input: {
   freezes: ActivityFreeze[];
   changes: DayChange[];
   today: Day;
-  /** who's looking: their own empty days get a row (see the `gap` row) */
-  me?: { id: string; joined_on: Day; left_on?: Day | null };
 }): ActivityDay[] {
-  const { pact, state, checkins, misses, changes, today, me } = input;
+  const { pact, state, checkins, misses, changes, today } = input;
   // automatic freezes count as soon as the engine spends them; the hourly cron writes them down later
   const freezes: ActivityFreeze[] = [
     ...input.freezes,
@@ -130,8 +122,6 @@ export function activityDays(input: {
     });
   }
 
-  // days of yours another row already shows (a "didn't check in" day, or every day of a short week)
-  const shown = new Set<Day>();
   // days (weeks) that are over and settled: everyone who counted and fell short gets a row
   for (const p of state.periods) {
     if (p.end >= today || p.status === "late" || p.status === "upcoming" || p.rest) continue;
@@ -141,19 +131,15 @@ export function activityDays(input: {
       const count = p.counts[u] ?? 0;
       if (count >= need) continue;
       if (weekly) {
-        if (u === me?.id) for (let d = p.start; d <= p.end; d = addDays(d, 1)) shown.add(d);
         add(p.end, "", { type: "short", key: `s:${u}|${p.start}`, user: u, day: p.end, start: p.start, count, need, cover: coverFor(freezes, p.start, u) });
         continue;
       }
       const key = `${u}|${p.start}`;
       // logged but it didn't count (over a break pact's limit), or said so: those rows are already there
       if (logged.has(key) || said.has(key)) continue;
-      if (u === me?.id) shown.add(p.start);
       add(p.start, "", { type: "miss", key: `n:${key}`, user: u, day: p.start, said: false, cover: coverFor(freezes, p.start, u), change: changeOf(u, p.start) });
     }
   }
-
-  if (me) for (const g of gapRuns(pact, state, checkins, misses, shown, me, today)) add(g.day, "", g);
 
   return [...byDay.entries()]
     .sort((a, b) => (a[0] < b[0] ? 1 : -1))
@@ -169,25 +155,31 @@ export function activityDays(input: {
     }));
 }
 
+/** a run of your own days with nothing logged: `days` skips days off, `start` and `end` are its first and last */
+export interface EmptyRun {
+  start: Day;
+  end: Day;
+  days: Day[];
+}
+
 /**
- * Your own days that are over (not yesterday: the log sheet has it) with nothing logged and no other row, grouped into
- * runs. A day only counts as empty while you're short in its period, so a weekly pact's week you already met has none.
+ * Your own days that are over (not yesterday: the make-up has it) with nothing logged, in runs. A day only counts as
+ * empty while you're short in its period, so a weekly pact's week you already met has none. Days off don't end a run.
  */
-function gapRuns(
+export function emptyRuns(
   pact: PactCore,
   state: PactState,
   checkins: CheckinCore[],
   misses: MissCore[],
-  shown: Set<Day>,
   me: { id: string; joined_on: Day; left_on?: Day | null },
   today: Day,
-): Extract<ActivityRow, { type: "gap" }>[] {
+): EmptyRun[] {
   const yesterday = addDays(today, -1);
   const answered = new Set([...checkins, ...misses].filter((x) => x.user_id === me.id).map((x) => x.day));
-  const out: Extract<ActivityRow, { type: "gap" }>[] = [];
+  const out: EmptyRun[] = [];
   let run: Day[] = [];
   const flush = () => {
-    if (run.length) out.push({ type: "gap", key: `g:${me.id}|${run[0]}`, user: me.id, day: run[run.length - 1], start: run[0], days: run });
+    if (run.length) out.push({ start: run[0], end: run[run.length - 1], days: run });
     run = [];
   };
   for (const p of state.periods) {
@@ -196,12 +188,29 @@ function gapRuns(
     const short = (p.counts[me.id] ?? 0) < need;
     for (let d = p.start; d <= p.end && d < yesterday; d = addDays(d, 1)) {
       if (isRestDay(pact, d)) continue;
-      if (short && !answered.has(d) && !shown.has(d) && canChangeDay(pact, me, d, today)) run.push(d);
+      if (short && !answered.has(d) && canChangeDay(pact, me, d, today)) run.push(d);
       else flush();
     }
   }
   flush();
   return out;
+}
+
+/** days in a row with nothing logged before the catch-up card offers to fill them in */
+export const CATCH_UP_DAYS = 3;
+
+/**
+ * The catch-up card: your latest run of empty days, when it's long enough and you're only just back (it reaches the
+ * day before yesterday). Once you've been back a couple of days, it stops asking.
+ */
+export function catchUpRun(...args: Parameters<typeof emptyRuns>): EmptyRun | null {
+  const [pact, , , , , today] = args;
+  const last = emptyRuns(...args).at(-1);
+  if (!last || last.days.length < CATCH_UP_DAYS) return null;
+  // the day before yesterday, or the working day before it when that's a day off
+  let edge = addDays(today, -2);
+  while (edge > last.end && isRestDay(pact, edge)) edge = addDays(edge, -1);
+  return last.end >= edge ? last : null;
 }
 
 /** a round can be changed until a week after it ends */
@@ -289,6 +298,110 @@ export function previewDay(x: DayInputs, me: string, day: Day, did: boolean, val
   return { state, period, needsFreeze, canFreeze, othersUncovered, frozen, freezesLeft: state.freezesLeftBy[me] ?? 0 };
 }
 
+/** one answer in a batch: did it (with a number) or not */
+export interface DayAnswer {
+  day: Day;
+  did: boolean;
+  value: number | null;
+}
+
+/**
+ * What the chain looks like after several of your days are answered at once (the catch-up). Mirrors set_days() in
+ * SQL, which runs set_day() for each day in date order: swap the check-in or miss, then hand back the freezes each
+ * change made unnecessary. No manual freezes: misses past the make-up window pay for themselves.
+ */
+export function previewDays(x: DayInputs, me: string, answers: DayAnswer[]): PactState {
+  let checkins = [...x.checkins];
+  let misses = [...x.misses];
+  let freezes = [...x.freezes];
+  for (const a of [...answers].sort((p, q) => (p.day < q.day ? -1 : 1))) {
+    checkins = checkins.filter((c) => !(c.user_id === me && c.day === a.day));
+    misses = misses.filter((m) => !(m.user_id === me && m.day === a.day));
+    if (a.did) checkins.push({ user_id: me, day: a.day, value: a.value, made_up: false });
+    else misses.push({ user_id: me, day: a.day });
+    const p = periodOf(compute(x, checkins, misses, freezes), a.day);
+    if (!p) continue;
+    if (settled(p)) freezes = freezes.filter((f) => f.period_start !== p.start);
+    else if (!p.culprits.includes(me)) freezes = freezes.filter((f) => !(f.period_start === p.start && f.covers === me));
+  }
+  return compute(x, checkins, misses, freezes);
+}
+
+/**
+ * One summary for a batch of answers (the catch-up's last screen): the chain, your freezes, whether you're in or
+ * paused, and yesterday if it's now yours to log. Never "back to 0".
+ */
+export function batchText(before: PactState, after: PactState, me: string, answers: DayAnswer[], unit: "day" | "week"): { text: string; tone: Tone } {
+  const yesterday = addDays(after.today, -1);
+  const units = (n: number) => `${n} ${n === 1 ? unit : unit + "s"}`;
+  const parts: string[] = [];
+  let tone: Tone = "plain";
+  const days = new Set(answers.map((a) => a.day));
+  const touched = after.periods.filter((p) => answers.some((a) => p.start <= a.day && a.day <= p.end));
+  const brokeNow = touched.filter((p) => p.status === "missed" && before.periods[p.index]?.status !== "missed");
+  // the earliest day you're counted in again
+  const back = touched.find(
+    (p) => p.required.includes(me) && !before.periods[p.index]?.required.includes(me) && answers.some((a) => a.did && p.start <= a.day && a.day <= p.end),
+  );
+  const pausedBefore = !!before.paused[me];
+  const pausedAfter = after.paused[me];
+  if (pausedBefore && !pausedAfter) parts.push(back ? `You're back in the chain from ${dayName(back.start, after.today)}.` : "You're back in the chain.");
+  else if (back) parts.push(`${capital(dayName(back.start, after.today))} counts with you in it.`);
+  if (brokeNow.length) {
+    const kept = after.periods.filter((p) => p.end < after.today && (p.status === "done" || p.status === "frozen")).length;
+    parts.push(`${capital(dayName(brokeNow[0].start, after.today))} breaks the chain. Your ${kept} kept ${kept === 1 ? unit : unit + "s"} still count.`);
+    tone = "warn";
+  } else if (after.streak > before.streak) {
+    parts.push(`The chain joins back up: ${units(after.streak)}.`);
+    tone = "good";
+  }
+  // misses that count without you: out of freezes, while someone else kept the day
+  const without = answers.filter((a) => !a.did && periodOf(after, a.day)?.paused.includes(me)).map((a) => a.day);
+  if (without.length) {
+    parts.push(`${capital(listDays(without, after.today))} ${without.length === 1 ? "counts" : "count"} without you, since you're out of freezes.`);
+    tone = "warn";
+  }
+  // freezes: the misses you just told us spend them, the days you fixed hand theirs back
+  const was = before.freezesLeftBy[me] ?? 0;
+  const left = after.freezesLeftBy[me] ?? 0;
+  const autoFor = (st: PactState, d: Day) => {
+    const p = periodOf(st, d);
+    return !!p && st.autoFreezes.some((a) => a.period === p.start && a.covers === me);
+  };
+  const spentOn = answers.filter((a) => !a.did && autoFor(after, a.day) && !autoFor(before, a.day)).map((a) => a.day);
+  const back_ = left - was + spentOn.length;
+  if (back_ > 0 && spentOn.length) {
+    parts.push(
+      `${back_ === 1 ? "A freeze comes" : `${back_} freezes come`} back${spentOn.length ? ` and ${spentOn.length === 1 ? "covers" : "cover"} ${listDays(spentOn, after.today)}` : ""}. You'll have ${left}.`,
+    );
+  } else if (back_ > 0) {
+    parts.push(`${back_ === 1 ? "A freeze comes" : `${back_} freezes come`} back. You'll have ${left}.`);
+    if (tone === "plain") tone = "good";
+  } else if (spentOn.length) {
+    parts.push(`${capital(listDays(spentOn, after.today))} ${spentOn.length === 1 ? "uses one" : `use ${spentOn.length}`} of your freezes. You'll have ${left} left.`);
+  } else if (left < was) {
+    parts.push(`${was - left === 1 ? "It uses one of your freezes" : `It uses ${was - left} of your freezes`}. You'll have ${left} left.`);
+  }
+  if (pausedAfter && (!pausedBefore || pausedAfter.since !== before.paused[me]?.since)) {
+    parts.push(pausedBefore ? "You're still paused until your next check-in." : "You'll be paused until your next check-in.");
+    tone = "warn";
+  }
+  // yesterday is now yours to log (or answer): it counts for you again
+  const late = after.periods.find((p) => p.end === yesterday && p.status === "late");
+  const lateWas = late && before.periods[late.index];
+  if (late && unit === "day" && late.owing.includes(me) && !lateWas?.owing.includes(me) && !days.has(yesterday)) {
+    parts.push("Yesterday counts for you too, so log it before midnight.");
+    if (tone === "good") tone = "plain";
+  }
+  if (!parts.length) return { text: "No change to the chain.", tone: "plain" };
+  if (tone === "plain" && pausedBefore && !pausedAfter) tone = "good";
+  return { text: parts.join(" "), tone };
+}
+
+function dayName(d: Day, today: Day): string {
+  return d === addDays(today, -1) ? "yesterday" : diffDays(d, today) < 7 ? formatDay(d, { weekday: "long" }) : formatDay(d, { weekday: "short", day: "numeric", month: "short" });
+}
+
 export type Tone = "good" | "warn" | "plain";
 
 /**
@@ -302,12 +415,23 @@ export function changeText(
   day: Day,
   label: string,
   unit: "day" | "week",
+  kind: "build" | "break" = "build",
 ): { text: string; tone: Tone } {
   // days after it that count for you now and didn't before (a check-in brings you back from a pause, or starts you
   // earlier): they spend your freezes, or pause you, until you fill them in
   const owed = newlyOwed(before, after.state, me, day);
   const owedFreezes = owed.filter((p) => after.state.autoFreezes.some((a) => a.period === p.start && a.covers === me)).length;
-  const r = baseText(before, after, me, day, label, unit, owedFreezes);
+  const base = baseText(before, after, me, day, label, unit, owedFreezes, kind);
+  // freezes go to the earliest misses first: a new miss can take the freeze a later day was using
+  const moved = after.state.periods.filter(
+    (p) => !(p.start <= day && day <= p.end) && p.paused.includes(me) && !!before.periods[p.index]?.required.includes(me),
+  );
+  const r = moved.length
+    ? {
+        text: `${base.text} ${capital(listDays(moved.map((p) => p.start), after.state.today))} ${moved.length === 1 ? "counts" : "count"} without you now, since you're out of freezes.`,
+        tone: "warn" as Tone,
+      }
+    : base;
   if (!owed.length) return r;
   const one = owed.length === 1;
   const what = unit === "week" ? (one ? "The week after it" : `The ${owed.length} weeks after it`) : capital(listDays(owed.map((p) => p.start), after.state.today));
@@ -336,9 +460,7 @@ function newlyOwed(before: PactState, after: PactState, me: string, day: Day): P
 
 /** "Monday", "Monday and yesterday", "Sat 7 Nov, Monday and Tuesday" */
 function listDays(days: Day[], today: Day): string {
-  const names = days.map((d) =>
-    d === addDays(today, -1) ? "yesterday" : diffDays(d, today) < 7 ? formatDay(d, { weekday: "long" }) : formatDay(d, { weekday: "short", day: "numeric", month: "short" }),
-  );
+  const names = days.map((d) => dayName(d, today));
   return names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
@@ -350,6 +472,7 @@ function baseText(
   label: string,
   unit: "day" | "week",
   owedFreezes: number,
+  kind: "build" | "break",
 ): { text: string; tone: Tone } {
   const pb = periodOf(before, day);
   const pa = after.period;
@@ -364,7 +487,8 @@ function baseText(
   const back = leftHere > before_ && !after.frozen;
   const backText = (lead: string) => (back ? `${lead}your freeze comes back. You'll have ${leftHere}.` : "");
   // the miss spends one of your freezes by itself (past the make-up window, misses pay for themselves)
-  const spent = leftHere < before_ && !after.frozen;
+  const autoHere = (st: PactState) => !!pb && st.autoFreezes.some((a) => a.period === pb.start && a.covers === me);
+  const spent = (leftHere < before_ || (autoHere(after.state) && !autoHere(before))) && !after.frozen;
   // out of freezes in a group: the day counts without you
   const outNow = pa.paused.includes(me) && !pb.paused.includes(me);
   // paused for it, or not counted at all (paused, not started yet), and counted now
@@ -375,6 +499,19 @@ function baseText(
     pausedAfter && !pausedBefore ? " You'll be paused until your next check-in." : !pausedAfter && pausedBefore ? " You're back in the chain." : "";
 
   if (!lost(pb.status) && !lost(pa.status)) {
+    // "some days a week" break pacts: a slip the week allows
+    const slips = pa.slips[me] ?? 0;
+    if (kind === "break" && unit === "week" && slips > (pb.slips[me] ?? 0)) {
+      const days = diffDays(pa.start, pa.end) + 1;
+      const allowed = days - Math.min(after.state.need, days);
+      const open = pa.end >= after.state.today;
+      if (allowed > 0 && slips <= allowed) {
+        return {
+          text: `That's ${slips} of the ${allowed} ${allowed === 1 ? "day" : "days"} ${open ? "this" : "that"} week allows${open ? "" : ", so the week still counts"}.${pauseNote}`,
+          tone: "plain",
+        };
+      }
+    }
     // a week that's still going: say where you are in it
     if (unit === "week" && pa.end >= after.state.today) {
       const count = pa.counts[me] ?? 0;

@@ -51,6 +51,9 @@ function friendly(msg: string | undefined) {
     "Days off always count",
     "You have no freezes left",
     "Check the number and try again",
+    "There's nothing to save",
+    "That's too many days at once",
+    "Check the details and try again",
   ];
   const hit = known.find((k) => msg.includes(k));
   if (hit) return hit;
@@ -353,6 +356,32 @@ export async function setDay(input: {
   if (error) return fail(friendly(error.message));
   refresh();
   return { ok: true, data: { frozen: !!(data as { frozen?: boolean } | null)?.frozen } };
+}
+
+/**
+ * Catch up on several of your own days at once (the catch-up card): set_day() for each, in date order, in one
+ * transaction. Quiet like setDay: no push.
+ */
+export async function setDays(input: { pactId: string; days: { day: string; did: boolean; value?: number | null }[] }): Promise<ActionResult<{ saved: number }>> {
+  const parsed = z
+    .object({
+      pactId: uuid,
+      days: z
+        .array(z.object({ day, did: z.boolean(), value: z.number().min(0).max(999999).nullable().optional() }))
+        .min(1)
+        .max(31),
+    })
+    .safeParse(input);
+  if (!parsed.success) return fail("Check the details and try again");
+  const v = parsed.data;
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("set_days", {
+    p_pact: v.pactId,
+    p_days: v.days.map((d) => ({ day: d.day, did: d.did, value: d.did ? (d.value ?? null) : null })),
+  });
+  if (error) return fail(friendly(error.message));
+  refresh();
+  return { ok: true, data: { saved: Number(data ?? 0) } };
 }
 
 // ───────────────────────── nudges & freezes ─────────────────────────

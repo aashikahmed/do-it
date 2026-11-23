@@ -29,6 +29,7 @@ export const checkIn = wrap(A.checkIn);
 export const updateCheckIn = wrap(A.updateCheckIn);
 export const undoCheckIn = wrap(A.undoCheckIn);
 export const setDay = wrap(A.setDay);
+export const setDays = wrap(A.setDays);
 export const nudge = wrap(A.nudge);
 export const setHeart = wrap(A.setHeart);
 export const applyFreeze = wrap(A.applyFreeze);

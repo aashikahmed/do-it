@@ -32,20 +32,9 @@ type SheetFor = { kind: "today"; c: Checkin } | { kind: "day"; row: ActivityRow 
  * Hold one of your own rows to change it (a menu first, so a stray hold never lands in a form).
  */
 export function Activity({ b, me }: { b: PactBundle; me: Me }) {
-  const mine = b.members.find((m) => m.user_id === me.id);
   const days = useMemo(
-    () =>
-      activityDays({
-        pact: b.pact,
-        state: b.state,
-        checkins: b.checkins,
-        misses: b.misses,
-        freezes: b.freezes,
-        changes: b.changes,
-        today: b.today,
-        me: mine ? { id: me.id, joined_on: mine.joined_on, left_on: mine.left_on } : undefined,
-      }),
-    [b.pact, b.state, b.checkins, b.misses, b.freezes, b.changes, b.today, me.id, mine],
+    () => activityDays({ pact: b.pact, state: b.state, checkins: b.checkins, misses: b.misses, freezes: b.freezes, changes: b.changes, today: b.today }),
+    [b.pact, b.state, b.checkins, b.misses, b.freezes, b.changes, b.today],
   );
   const [count, setCount] = useState(FIRST_DAYS);
   const [open, setOpen] = useState<Open | null>(null);
@@ -129,7 +118,7 @@ function Row({ b, me, row, holdable, onHold }: { b: PactBundle; me: Me; row: Act
   const body = (extra?: ReactNode) => (
     <div
       {...props}
-      aria-label={holdable ? `${rowLabel(b, me.id, row)}. ${row.type === "gap" ? "Hold to fill in" : "Hold to change"}.` : undefined}
+      aria-label={holdable ? `${rowLabel(b, me.id, row)}. Hold to change.` : undefined}
       className={`relative rounded-2xl ${holdable ? "cursor-pointer select-none outline-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-[var(--pact)]" : ""}`}
     >
       {holdable && <HoldFill holding={holding} />}
@@ -150,11 +139,11 @@ function Row({ b, me, row, holdable, onHold }: { b: PactBundle; me: Me; row: Act
 function RowBody({ b, me, row, extra }: { b: PactBundle; me: Me; row: ActivityRow; extra?: ReactNode }) {
   const member = b.allMembers.find((m) => m.user_id === row.user);
   const name = member?.name ?? "Former member";
-  const silent = row.type === "short" || row.type === "gap" || (row.type === "miss" && !row.said);
+  const silent = row.type === "short" || (row.type === "miss" && !row.said);
   const c = row.type === "checkin" ? (row.checkin as Checkin) : null;
   const [before, setBefore] = useState(false);
-  const change = "change" in row ? row.change : null;
-  const cover = coverOf(row);
+  const change = row.type !== "short" ? row.change : null;
+  const cover = row.type !== "checkin" ? row.cover : null;
 
   return (
     <div className="relative flex gap-3 px-3 py-3">
@@ -166,11 +155,6 @@ function RowBody({ b, me, row, extra }: { b: PactBundle; me: Me; row: ActivityRo
           <b>{row.user === me.id ? "You" : firstName(name)}</b> <RowText b={b} row={row} />
         </p>
         {c?.note && <p className="mt-0.5 text-[15px] leading-snug break-words">{c.note}</p>}
-        {row.type === "gap" && (
-          <p className="mt-0.5 text-[13px] text-ink-3">
-            {row.days.length > 1 ? `${row.days.length} days. Hold to fill them in.` : "Hold to fill it in."}
-          </p>
-        )}
         {(cover || change) && (
           <span className="mt-1 flex flex-wrap gap-1.5">
             {cover && <span className="rounded-full bg-ice/30 px-2 py-0.5 text-[12px] font-semibold text-ink-2">{coverText(b, me.id, row.user, cover)}</span>}
@@ -211,7 +195,6 @@ function RowText({ b, row }: { b: PactBundle; row: ActivityRow }) {
       </span>
     );
   }
-  if (row.type === "gap") return <span className="text-ink-3">{gapText(b, row)}</span>;
   if (row.said) return <span className="font-semibold text-ember">{isBreak ? "gave in" : "missed it"}</span>;
   return isBreak ? <span className="text-ink-3">didn&apos;t answer</span> : <span className="font-semibold text-ember">didn&apos;t check in</span>;
 }
@@ -237,22 +220,6 @@ function coverText(b: PactBundle, me: string, user: string, cover: Cover) {
   if (cover.by === me) return "covered by your freeze";
   if (cover.by === user) return "covered by their freeze";
   return `covered by ${firstName(b.allMembers.find((m) => m.user_id === cover.by)?.name ?? "a partner")}'s freeze`;
-}
-
-function coverOf(row: ActivityRow) {
-  return row.type === "miss" || row.type === "short" ? row.cover : null;
-}
-
-/** "logged nothing", or "didn't answer from Sat 14 to Tue 17" for a run */
-function gapText(b: PactBundle, row: Extract<ActivityRow, { type: "gap" }>) {
-  const what = b.pact.kind === "break" ? "didn't answer" : "logged nothing";
-  if (row.start === row.day) return what;
-  return `${what} from ${shortDay(row.start)} to ${shortDay(row.day)}`;
-}
-
-/** "Fri 13" (Intl puts the day number first) */
-function shortDay(d: Day) {
-  return `${formatDay(d, { weekday: "short" })} ${formatDay(d, { day: "numeric" })}`;
 }
 
 function beforeText(b: PactBundle, ch: DayChange) {
@@ -286,17 +253,13 @@ function dayWord(d: Day, b: PactBundle) {
 
 function menuTitle(b: PactBundle, row: ActivityRow) {
   if (row.type === "short") return "Add a day to this week";
-  if (row.type === "gap") {
-    const verb = b.pact.kind === "break" ? "Answer for" : "Fill in";
-    return row.days.length === 1 ? `${verb} ${dayWord(row.days[0], b)}` : `${verb} a day`;
-  }
   const verb = row.type === "miss" && !row.said && b.pact.kind === "break" ? "Answer for" : "Change";
   return `${verb} ${dayWord(row.day, b)}`;
 }
 
 function nowText(b: PactBundle, me: string, row: ActivityRow) {
   const text = rowLabel(b, me, row, true);
-  const cover = coverOf(row);
+  const cover = row.type !== "checkin" ? row.cover : null;
   return cover ? `${text}, ${coverText(b, me, row.user, cover)}` : text;
 }
 
@@ -306,7 +269,6 @@ function rowLabel(b: PactBundle, me: string, row: ActivityRow, bare = false) {
   const who = bare ? "" : `${row.user === me ? "You" : firstName(b.allMembers.find((m) => m.user_id === row.user)?.name ?? "Someone")} `;
   if (row.type === "checkin") return `${who}${activityLine(row.checkin as Checkin, b)}`;
   if (row.type === "short") return `${who}${isBreak ? `stayed off it ${row.count} of ${row.need} days` : `checked in ${row.count} of ${row.need} times`}`;
-  if (row.type === "gap") return `${who}${gapText(b, row)}`;
   if (row.said) return `${who}${isBreak ? "gave in" : "missed it"}`;
   return `${who}${isBreak ? "didn't answer" : "didn't check in"}`;
 }
@@ -317,7 +279,6 @@ function holdable(b: PactBundle, me: string, row: ActivityRow) {
   if (row.type === "checkin" && row.day === b.today) return true;
   const member = b.members.find((m) => m.user_id === me);
   if (row.type === "short") return weekDays(b, me, row).length > 0;
-  if (row.type === "gap") return row.days.length > 0;
   return canChangeDay(b.pact, member, row.day, b.today);
 }
 
@@ -333,17 +294,19 @@ function weekDays(b: PactBundle, me: string, row: Extract<ActivityRow, { type: "
 
 // ───────────────────────── change a day ─────────────────────────
 
-function DaySheet({ b, me, row, onClose }: { b: PactBundle; me: string; row: ActivityRow; onClose: () => void }) {
+/**
+ * Change (or fill in) one of your days. In its own sheet, or inside another one (the log sheet's Earlier tab), where
+ * `onBack` returns to the calendar.
+ */
+export function DaySheet({ b, me, row, onClose, onBack }: { b: PactBundle; me: string; row: ActivityRow; onClose: () => void; onBack?: () => void }) {
   const { pact } = b;
   const isBreak = pact.kind === "break";
   const amount = isBreak && pact.measure === "count";
-  // a short week only adds a check-in; a run of empty days can be answered either way
-  const week = row.type === "short";
-  const pick = row.type === "short" ? weekDays(b, me, row) : row.type === "gap" ? row.days : null;
+  const week = row.type === "short" ? weekDays(b, me, row) : null;
   const existing = row.type === "checkin" ? (row.checkin as Checkin) : null;
   const startDid = row.type === "checkin" ? true : row.type === "miss" && row.said ? false : week || amount ? true : null;
 
-  const [day, setDayPicked] = useState<Day | null>(pick ? (pick.length === 1 ? pick[0] : null) : row.day);
+  const [day, setDayPicked] = useState<Day | null>(week ? (week.length === 1 ? week[0] : null) : row.day);
   const [did, setDid] = useState<boolean | null>(startDid);
   // a new "I did it" starts from your last number, like checking in does
   const lastValue = b.checkins.find((c) => c.user_id === me && c.value !== null)?.value ?? pact.target ?? null;
@@ -359,7 +322,7 @@ function DaySheet({ b, me, row, onClose }: { b: PactBundle; me: string; row: Act
   const plain = day !== null && did !== null ? previewDay(inputs, me, day, did, did ? value : null, false) : null;
   const preview = plain && freeze && plain.canFreeze && day !== null && did !== null ? previewDay(inputs, me, day, did, did ? value : null, true) : plain;
   const label = pact.cadence === "weekly" ? "That week" : day ? capital(dayWord(day, b)) : "";
-  const effect = preview && day ? changeText(b.state, preview, me, day, label, pact.cadence === "weekly" ? "week" : "day") : null;
+  const effect = preview && day ? changeText(b.state, preview, me, day, label, pact.cadence === "weekly" ? "week" : "day", pact.kind ?? "build") : null;
   const reactions = existing && did === false ? b.hearts.filter((h) => h.checkin_id === existing.id).length : 0;
   const limit = day ? limitOn(pact, day) : null;
 
@@ -389,28 +352,22 @@ function DaySheet({ b, me, row, onClose }: { b: PactBundle; me: string; row: Act
     router.refresh();
   }
 
-  const title = day
-    ? day === b.yesterday
-      ? `Yesterday, ${formatDay(day)}`
-      : formatDay(day, { weekday: "long", day: "numeric", month: "short" })
-    : row.type === "gap"
-      ? "Fill in a day"
-      : "Add a day";
+  const title = day ? (day === b.yesterday ? `Yesterday, ${formatDay(day)}` : formatDay(day, { weekday: "long", day: "numeric", month: "short" })) : "Add a day";
   const yes = isBreak ? "I stayed off it" : "I did it";
   const no = isBreak ? "I gave in" : "I missed it";
   const tone = effect?.tone === "good" ? "bg-mint/15" : effect?.tone === "warn" ? "bg-ember/10" : "bg-mist";
 
-  return (
-    <Sheet open onClose={onClose} title={title}>
-      <p className="-mt-3 mb-4 text-[15px] text-ink-3">
+  const body = (
+    <>
+      <p className={`${onBack ? "" : "-mt-3 "}mb-4 text-[15px] text-ink-3`}>
         {amount ? `How many ${pact.unit ?? ""} did you have?${limit !== null ? ` Your limit was ${formatValue(pact, limit)}.` : ""}` : isBreak ? "Did you stay off it?" : pact.title}
       </p>
 
-      {pick && pick.length > 1 && (
+      {week && week.length > 1 && (
         <div className="mb-4">
           <p className="mb-2 text-[13px] font-semibold text-ink-3">Which day?</p>
           <div className="flex flex-wrap gap-2">
-            {pick.map((d) => (
+            {week.map((d) => (
               <button
                 key={d}
                 type="button"
@@ -486,8 +443,41 @@ function DaySheet({ b, me, row, onClose }: { b: PactBundle; me: string; row: Act
         {busy ? "Saving…" : "Save"}
       </button>
       {!(startDid === null && day === b.yesterday) && <p className="mt-2 mb-2 text-center text-[13px] text-ink-3">Your partners see it as changed.</p>}
+    </>
+  );
+  if (onBack) {
+    return (
+      <div>
+        <div className="mb-2 flex items-center gap-1">
+          <button type="button" onClick={onBack} aria-label="Back to your days" className="-ml-2 flex h-10 w-10 items-center justify-center rounded-full text-ink-2">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden>
+              <path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <h3 className="text-[20px] font-extrabold">{title}</h3>
+        </div>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <Sheet open onClose={onClose} title={title}>
+      {body}
     </Sheet>
   );
+}
+
+/** "Fri 13" (Intl puts the day number first) */
+export function shortDay(d: Day) {
+  return `${formatDay(d, { weekday: "short" })} ${formatDay(d, { day: "numeric" })}`;
+}
+
+/** your row for a day, as Activity would show it, so a calendar can open the same form */
+export function rowForDay(b: PactBundle, me: string, day: Day): ActivityRow {
+  const c = b.checkins.find((x) => x.user_id === me && x.day === day);
+  if (c) return { type: "checkin", key: `c:${c.id}`, user: me, day, checkin: c, change: null };
+  const said = b.misses.some((m) => m.user_id === me && m.day === day);
+  return { type: "miss", key: `d:${day}`, user: me, day, said, cover: null, change: null };
 }
 
 function capital(s: string) {
