@@ -1,6 +1,7 @@
 import type { PactBundle } from "./data";
 import { formatDay, diffDays, type Day } from "./dates";
 import { limitOn, planFreezes, type Cadence, type Kind, type LateOutcome } from "./streak";
+import { weekAtRisk, weekEndsText, weekNote, weekOutlook } from "./week";
 
 export function listNames(names: string[], max = 2) {
   if (names.length === 0) return "";
@@ -216,8 +217,10 @@ export function progressText(b: PactBundle) {
   if (state.phase === "upcoming") return startsText(pact.start_date, b.today);
   const round = pact.round > 1 ? `Round ${pact.round}` : "";
   if (state.phase === "ended") return round ? `${round} finished` : "Finished";
+  // weeks run from the pact's own start day, so always say which day this one ends
+  const ends = state.current ? `, ${weekEndsText(state.current.end, b.today)}` : "";
   const where =
-    pact.cadence === "daily" ? `day ${state.dayNumber} of ${pact.duration_days}` : `week ${(state.current?.index ?? 0) + 1} of ${state.periods.length}`;
+    pact.cadence === "daily" ? `day ${state.dayNumber} of ${pact.duration_days}` : `week ${(state.current?.index ?? 0) + 1} of ${state.periods.length}${ends}`;
   return round ? `${round}, ${where}` : where[0].toUpperCase() + where.slice(1);
 }
 
@@ -254,8 +257,13 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
   const owes = (id: string) =>
     pact.cadence === "daily" ? !b.checkins.some((c) => c.user_id === id && c.day === b.today) : (cur.counts[id] ?? 0) < need;
   const iOwe = owes(me);
-  // someone being paused at midnight doesn't count toward today either way
-  const othersOwing = others.filter((m) => cur.required.includes(m.user_id) && owes(m.user_id) && !pausingSoon(b, m.user_id));
+  // someone being paused at midnight doesn't count toward today either way, and nor does someone who can't make
+  // this week anymore (their own freeze or a pause settles it), unless the streak hangs on them
+  const lostWeek = (id: string) => {
+    const o = weekOutlook(b, id);
+    return o?.pace === "short" && o.ifShort !== "break";
+  };
+  const othersOwing = others.filter((m) => cur.required.includes(m.user_id) && owes(m.user_id) && !pausingSoon(b, m.user_id) && !lostWeek(m.user_id));
   const othersDone = others.filter((m) => !owes(m.user_id));
 
   if (isPaused(b, me)) {
@@ -267,8 +275,10 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
     return { text: `You're in. ${start} ${chainCountsText(b, me, "you")}.`, tone: "info" };
   }
   if (pact.cadence === "weekly" && iOwe) {
-    const left = need - (cur.counts[me] ?? 0);
-    return { text: `${left} more this week to keep the chain`, tone: "act" };
+    const o = weekOutlook(b, me);
+    const note = o && weekNote(o, b.today);
+    if (o && note) return { text: note.replace(/\.$/, ""), tone: weekAtRisk(o) ? "risk" : o.pace === "short" ? "info" : "act" };
+    return { text: `${need - (cur.counts[me] ?? 0)} more this week`, tone: "act" };
   }
   if (iOwe) {
     if (!others.length) return { text: "Your turn today", tone: "act" };
@@ -281,14 +291,17 @@ export function statusLine(b: PactBundle, me: string): { text: string; tone: Ton
   const notYet = others.filter((m) => !hasStarted(b, m.user_id) && owes(m.user_id));
   const away = others.filter((m) => isPaused(b, m.user_id) && owes(m.user_id));
   const quiet = others.filter((m) => lateOutcome(b, m.user_id) === "quiet" && owes(m.user_id));
+  // weekly: nothing logged all week and too few days left to make it, so the week's end pauses them
+  const silent = others.filter((m) => weekOutlook(b, m.user_id)?.ifShort === "quiet");
   const out = others.filter((m) => lateOutcome(b, m.user_id) === "out" && owes(m.user_id));
-  if (notYet.length || away.length || quiet.length || out.length) {
+  if (notYet.length || away.length || quiet.length || out.length || silent.length) {
     const names = (xs: typeof others) => listNames(xs.map((m) => firstName(m.name)));
     const bits = [
       notYet.length ? `${names(notYet)} ${notYet.length === 1 ? "hasn't" : "haven't"} started yet.` : "",
       away.length ? `${names(away)} ${away.length === 1 ? "is" : "are"} paused.` : "",
       quiet.length ? `${names(quiet)} ${quiet.length === 1 ? "has" : "have"} been quiet for ${pact.cadence === "daily" ? "3 days" : "a week"}.` : "",
       out.length ? `${names(out)} ${out.length === 1 ? "is" : "are"} out of freezes.` : "",
+      silent.length ? `${names(silent)} ${silent.length === 1 ? "hasn't" : "haven't"} logged anything this week.` : "",
     ].filter(Boolean);
     return { text: `${pact.cadence === "daily" ? "Done for today" : "Target hit this week"}. ${bits.join(" ")}`, tone: "done" };
   }
@@ -305,7 +318,8 @@ function breakLine(b: PactBundle, me: string): { text: string; tone: Tone } {
   if (pact.cadence === "weekly") {
     const allowed = allowedDays(pact);
     const left = Math.max(0, allowed - (cur.slips[me] ?? 0));
-    return { text: left === 0 ? `No ${what} days left this week` : `${left} of ${allowed} ${what} ${allowed === 1 ? "day" : "days"} left this week`, tone: "info" };
+    const until = cur.end === b.today ? "today" : `until ${formatDay(cur.end, { weekday: "long" })}`;
+    return { text: left === 0 ? `No ${what} days left ${until}` : `${left} of ${allowed} ${what} ${allowed === 1 ? "day" : "days"} left ${until}`, tone: "info" };
   }
   const n = state.streak;
   if (n === 0) return { text: "A fresh start today", tone: "info" };

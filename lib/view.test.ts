@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PactBundle } from "./data";
 import { addDays, type Day } from "./dates";
 import { computePactState, type Cadence } from "./streak";
-import { breakTitle, chainCountsText, inviteText, isStarting, lateOutcome, missOutcome, othersRiskingChain, pactName, pausingSoon, statusLine } from "./view";
+import { breakTitle, chainCountsText, inviteText, isStarting, lateOutcome, missOutcome, othersRiskingChain, pactName, pausingSoon, progressText, statusLine } from "./view";
 
 const A = "a";
 const B = "b";
@@ -243,5 +243,20 @@ describe("the night before a pause", () => {
     const b = night("2026-11-06", 3);
     const next = computePactState({ ...b.pact, freezes_allowed: 3 }, b.members, b.checkins, [], "2026-11-11");
     expect(next.paused[B]).toEqual({ since: "2026-11-10", why: "quiet" });
+  });
+});
+
+describe("weekly pacts name the week's end", () => {
+  // started Wednesday 11 November: weeks run Wednesday to Tuesday. A checked in on the 11th only.
+  const b = bundle({ cadence: "weekly", start: "2026-11-11", days: 28, today: "2026-11-12", bJoinedOn: "2026-11-13" });
+
+  it("in the progress line", () => {
+    expect(progressText(b)).toBe("Week 1 of 4, ends Tuesday");
+    const last = bundle({ cadence: "weekly", start: "2026-11-11", days: 28, today: "2026-11-17", bJoinedOn: "2026-11-18" });
+    expect(progressText(last)).toBe("Week 1 of 4, last day");
+  });
+
+  it("in the status line", () => {
+    expect(statusLine(b, A)).toEqual({ text: "2 more by Tuesday", tone: "act" });
   });
 });

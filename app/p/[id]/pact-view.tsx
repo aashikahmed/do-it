@@ -43,6 +43,7 @@ import {
   subjectOf,
 } from "@/lib/view";
 import { limitOn, type Period } from "@/lib/streak";
+import { dayName, daysNeeded, weekAtRisk, weekNote, weekOutlook, weekRange } from "@/lib/week";
 import { deadlineText, pactDeadline, tzFor } from "@/lib/reminders";
 import { useViewerTimeZone } from "@/components/time-zone";
 import { FEELS, formatAvg, formatValue, isBetter, progressStats, targetText, type Feel, type Tracking } from "@/lib/measure";
@@ -279,6 +280,8 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
 
     let status: string;
     let sub: string | null = null;
+    // weekly build pacts: where they stand in the week (what's left, and what the week's end brings)
+    const week = !isBreak && !starting && !isPausedNow ? weekOutlook(b, m.user_id) : null;
     if (state.phase === "upcoming") status = isMe ? "Ready" : `Joined ${formatDay(m.joined_at.slice(0, 10), { day: "numeric", month: "short" })}`;
     else if (isPausedNow) {
       status = why === "out" ? "Out of freezes" : `After ${quietSpan(pact.cadence)}`;
@@ -298,7 +301,11 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
     else if (isBreak) status = breakStatus(b, m.user_id, todays);
     else if (pact.cadence === "daily") status = todays ? describe(todays, pact) : "Not yet";
     else if (starting) status = `${count} this week${todays ? ", done today" : ""}`;
-    else status = `${count} of ${state.need} this week${todays ? ", done today" : ""}`;
+    else if (week?.pace === "done") status = `${count} of ${state.need}, done for the week`;
+    else {
+      status = `${count} of ${state.need}${todays ? ", done today" : ""}`;
+      sub = week && weekNote(week, b.today, isMe ? undefined : first);
+    }
 
     return (
       <HeartRow key={m.user_id} b={b} me={me} c={todays} className="flex items-center gap-3 rounded-[18px] px-3 py-3">
@@ -319,7 +326,7 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
                 {isMe && <span className="font-medium text-ink-3"> (you)</span>}
               </p>
               <p className={`truncate text-[15px] ${done ? "font-semibold text-ink" : "text-ink-2"}`}>{status}</p>
-              {sub && <p className="text-[14px] leading-snug font-semibold text-ink-2">{sub}</p>}
+              {sub && <p className={`text-[14px] leading-snug font-semibold ${weekAtRisk(week) ? "text-[#c4381b]" : "text-ink-2"}`}>{sub}</p>}
               {!sub && starting && (
                 <p className="text-[14px] font-semibold text-ink-2">
                   {canNudge ? "Get them going. " : ""}
@@ -351,7 +358,11 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
 
   return (
     <section className="rounded-[24px] bg-paper p-2">
-      <h2 className="px-3 pt-3 pb-1 text-[17px] font-extrabold">{title}</h2>
+      <h2 className="flex items-baseline justify-between gap-2 px-3 pt-3 pb-1 text-[17px] font-extrabold">
+        {title}
+        {/* weeks start on the pact's own start day, so show which days this one covers */}
+        {pact.cadence === "weekly" && cur && state.phase === "active" && <span className="text-[14px] font-semibold text-ink-2">{weekRange(cur.start, cur.end)}</span>}
+      </h2>
       <ul>{active.map(row)}</ul>
       {paused.length > 0 && (
         <>
@@ -429,6 +440,17 @@ type NudgeAbout = "today" | "yesterday" | "start" | "back";
  * Opens WhatsApp with a ready-made nudge; the sender picks the contact there.
  * Works for partners who haven't turned on alerts, and needs no WhatsApp integration.
  */
+/** a weekly build pact's nudge: when the week ends and what they still need, or null to use the daily wording */
+function weekLine(b: PactBundle, toUser: string, name: string) {
+  const o = weekOutlook(b, toUser);
+  if (!o || o.pace === "done") return null;
+  const ends = dayName(o.end, b.today);
+  if (o.pace === "ok") return `Our week ends ${ends}, ${name}, and you've got ${o.togo} more to go.`;
+  if (o.pace === "tight") return o.lastDay ? `Last day of our week, ${name}. You need ${o.togo} more today.` : `Our week ends ${ends}, ${name}. You need ${daysNeeded(o, b.today)}.`;
+  if (o.ifShort === "quiet") return `Nothing logged this week yet, ${name}. One check-in by ${ends === "today" ? "tonight" : ends} and you won't be paused.`;
+  return null;
+}
+
 function WhatsAppNudge({ b, me, toUser, name, about }: { b: PactBundle; me: Me; toUser: string; name: string; about: NudgeAbout }) {
   const iDidIt = b.checkins.some((c) => c.user_id === me.id && c.day === b.today);
   function open() {
@@ -445,9 +467,8 @@ function WhatsAppNudge({ b, me, toUser, name, about }: { b: PactBundle; me: Me; 
       ? `We miss you in the chain, ${name}. Check in today and you're back in.`
       : about === "start"
       ? `Glad you're in, ${name}. Check in today to get going. ${chainCountsText(b, toUser, "you")}.`
-      : iDidIt
-        ? `I've done mine today. Your turn, ${name} 👀`
-        : `Still on for today, ${name}? Let's not break the chain.`;
+      : weekLine(b, toUser, name) ??
+        (iDidIt ? `I've done mine today. Your turn, ${name} 👀` : `Still on for today, ${name}? Let's not break the chain.`);
     // break pacts never name the habit, here either
     const text = b.pact.kind === "break" ? `${b.pact.emoji} ${line}\n${url}` : `${b.pact.emoji} ${b.pact.title}: ${line}\n${url}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
@@ -1025,7 +1046,8 @@ function BreakBar({ b, me, onCelebrate }: { b: PactBundle; me: Me; onCelebrate: 
   // one question at a time: yesterday's card comes first
   const yesterdayFirst = owesYesterdayAnswer(b, me.id);
   const asking = answer === null && !cur?.rest && b.canAnswerToday && !yesterdayFirst;
-  const weekLine = weekly ? (left === 0 ? `No ${what} days left this week.` : `${left} of ${allowed} ${what} ${allowed === 1 ? "day" : "days"} left this week.`) : null;
+  const until = !cur || cur.end === b.today ? "today" : `until ${formatDay(cur.end, { weekday: "long" })}`;
+  const weekLine = weekly ? (left === 0 ? `No ${what} days left ${until}.` : `${left} of ${allowed} ${what} ${allowed === 1 ? "day" : "days"} left ${until}.`) : null;
   const links = (
     <div className="flex justify-center gap-5 pt-0.5">
       {answer === null && !cur?.rest && !asking && (
