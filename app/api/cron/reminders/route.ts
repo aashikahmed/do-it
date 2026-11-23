@@ -8,6 +8,7 @@ import { fetchAll, type Pact } from "@/lib/data";
 import { capitalize, firstName, listNames, makeUpLabel } from "@/lib/view";
 import { byDeadline, eveningDue, isDaytime, morningDue, pactDeadline, tzFor, zonedTime } from "@/lib/reminders";
 import type { PactState } from "@/lib/streak";
+import { weekEvening, weekHeadsUp, weekOutlook, type WeekOutlook } from "@/lib/week";
 
 /**
  * Called hourly (see README). The pact's timezone sets the calendar (days, deadlines, who owes what), but each
@@ -17,6 +18,9 @@ import type { PactState } from "@/lib/streak";
  *   when the pact's midnight comes before their evening, and never in their quiet hours (10pm to 8am).
  * - Morning: "Tuesday is still open" to anyone who can still make up yesterday, once yesterday has closed, between
  *   9am and 9pm their time.
+ * - Weekly build pacts, morning: a heads-up once a week, the first day every day left is needed ("2 to go, 2 days
+ *   left"), and on the week's last day to anyone who's logged nothing all week (one check-in keeps them in). The
+ *   evening push on those days says the same, and never goes out for a week that can't be kept anymore.
  * Each member gets at most one of each per pact per pact day. Deadlines are worded on their clock ("before 4pm your time").
  *
  * Break pacts are different: evenings are when a habit is hardest to resist, so they never get an evening push,
@@ -38,7 +42,7 @@ export async function GET(req: NextRequest) {
   const admin = createAdminClient();
   const now = new Date();
   // every push this run, by kind, for the admin Health page (cron_runs)
-  const tally: Record<PushKind, number> = { evening: 0, makeup: 0, finished: 0, break_morning: 0, paused: 0 };
+  const tally: Record<PushKind, number> = { evening: 0, makeup: 0, week: 0, finished: 0, break_morning: 0, paused: 0 };
   let failed = 0;
   const pushAs =
     (kind: PushKind): typeof sendPush =>
@@ -74,7 +78,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ checked, sent });
 }
 
-type PushKind = "evening" | "makeup" | "finished" | "break_morning" | "paused";
+type PushKind = "evening" | "makeup" | "week" | "finished" | "break_morning" | "paused";
 
 /** One reminder pass. Returns how many pacts it looked at; pushes are counted through `pushAs`. */
 async function remind(admin: ReturnType<typeof createAdminClient>, now: Date, pushAs: (kind: PushKind) => typeof sendPush): Promise<number> {
@@ -159,15 +163,21 @@ async function remind(admin: ReturnType<typeof createAdminClient>, now: Date, pu
     const label = late ? makeUpLabel(pact.cadence, late) : "";
 
     const cur = state.current;
+    // weekly: where each person stands this week (null for daily pacts and anyone who doesn't count this week)
+    const week = new Map<string, WeekOutlook>();
+    for (const m of ms) {
+      const o = !m.left_on ? weekOutlook({ pact, state, checkins: cs, today }, m.user_id) : null;
+      if (o) week.set(m.user_id, o);
+    }
+    // weekly: every day left is needed and today isn't logged, or nothing all week and today's the last chance
+    const weekDue = (o: WeekOutlook | undefined) => !!o && !o.doneToday && (o.pace === "tight" || (o.ifShort === "quiet" && o.lastDay));
     const atRisk = new Set(
       cur
         ? ms
             .filter((m) => {
               if (!cur.required.includes(m.user_id)) return false;
               if (pact.cadence === "daily") return !cs.some((c) => c.user_id === m.user_id && c.day === today);
-              const left = state.need - (cur.counts[m.user_id] ?? 0);
-              const doneToday = cs.some((c) => c.user_id === m.user_id && c.day === today);
-              return left > 0 && !doneToday && left >= diffDays(today, cur.end) + 1;
+              return weekDue(week.get(m.user_id));
             })
             .map((m) => m.user_id)
         : [],
@@ -194,6 +204,25 @@ async function remind(admin: ReturnType<typeof createAdminClient>, now: Date, pu
         await pushAs("makeup")(group, { title: `${pact.emoji} ${capitalize(label)} is still open`, body: `${how} You have until ${until}.`, url, tag });
       }
     }
+    // weekly heads-up, in the morning: once a week when it turns tight, and on the last day for a silent week
+    if (pact.cadence === "weekly" && cur) {
+      const heads = [...week].filter(([u, o]) => weekDue(o) && !owesLate.has(u) && !evening.includes(u) && morningDue(now, closedAt, tzOf(u), deadline));
+      if (heads.length) {
+        const { data: claimed } = await admin
+          .from("checkin_notify_log")
+          .upsert(heads.map(([u, o]) => ({ pact_id: pact.id, user_id: u, day: cur.end, kind: o.pace === "tight" ? "week_tight" : "week_quiet" })), {
+            onConflict: "pact_id,user_id,day,kind",
+            ignoreDuplicates: true,
+          })
+          .select("user_id");
+        const got = new Set((claimed ?? []).map((r) => r.user_id as string));
+        for (const [u, o] of heads) {
+          if (!got.has(u)) continue;
+          await pushAs("week")([u], { ...weekHeadsUp(pact, o, today), url, tag });
+        }
+      }
+    }
+
     if (!evening.length) continue;
 
     // claim the reminder slot first so overlapping runs never double-send
@@ -229,8 +258,10 @@ async function remind(admin: ReturnType<typeof createAdminClient>, now: Date, pu
           group.filter((u) => owesLate.has(u) && !atRisk.has(u)),
           { title: `${pact.emoji} Last chance to make up ${label}`, body: `Make it up before ${until} to keep your freezes. ${streakBit}`, url, tag },
         ),
+        // weekly: what this week still needs, in their words
+        ...group.filter((u) => !owesLate.has(u) && week.has(u)).map((u) => sendEvening([u], { ...weekEvening(pact, week.get(u)!, today, until), url, tag })),
         sendEvening(
-          group.filter((u) => !owesLate.has(u)),
+          group.filter((u) => !owesLate.has(u) && !week.has(u)),
           {
             title: `${pact.emoji} ${pact.title} is waiting on you`,
             body: doneNames.length ? `${doneNames.join(" and ")} already did it. ${streakBit}` : `${streakBit} Check in before ${until}.`,
@@ -302,7 +333,7 @@ async function breakMorning(
   const settled = p.status === "done" || p.status === "missed" || p.status === "frozen";
   const ask = settled ? [] : active.filter((u) => p.required.includes(u) && !answered(u));
 
-  // news only once a link has closed (every day for daily pacts, Monday morning for weekly ones), and only in a group
+  // news only once a link has closed (every day for daily pacts, the morning after the pact's week ends for weekly ones), and only in a group
   let good: string[] = [];
   let bad: { to: string[]; title: string; body: string } | null = null;
   if (p.end === yesterday && active.length > 1 && !ask.length) {

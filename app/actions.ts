@@ -11,6 +11,7 @@ import { addDays, isValidTimeZone, todayIn } from "@/lib/dates";
 import { firstName, listNames, makeUpLabel } from "@/lib/view";
 import { planFreezes } from "@/lib/streak";
 import { deadlineText, pactDeadline, tzFor } from "@/lib/reminders";
+import { dayName, weekEndOn } from "@/lib/week";
 
 export type ActionResult<T = undefined> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -391,7 +392,7 @@ export async function nudge(input: { pactId: string; toUser: string; about?: "to
   if (!uuid.safeParse(input.pactId).success || !uuid.safeParse(input.toUser).success) return fail("Can't nudge right now");
   const { supabase, userId } = await requireUser();
   if (input.toUser === userId) return fail("You can't nudge yourself");
-  const { data: pact } = await supabase.from("pacts").select("id,title,emoji,timezone,kind").eq("id", input.pactId).maybeSingle();
+  const { data: pact } = await supabase.from("pacts").select("id,title,emoji,timezone,kind,cadence,start_date,duration_days").eq("id", input.pactId).maybeSingle();
   if (!pact) return fail("Pact not found");
   const today = todayIn(pact.timezone);
   // break pacts: only ever about answering for yesterday, and never naming the habit
@@ -410,6 +411,8 @@ export async function nudge(input: { pactId: string; toUser: string; about?: "to
       ? `${pact.emoji} ${pact.title}. You're in. Check in today to get going.`
       : input.about === "back"
       ? `${pact.emoji} ${pact.title}. Check in today and you're back in the chain.`
+      : pact.cadence === "weekly"
+      ? `${pact.emoji} ${pact.title}. Still on for this week? It ends ${dayName(weekEndOn(pact, today), today)}.`
       : `${pact.emoji} ${pact.title}. Still on for today?`;
   after(async () => {
     const [name, { data: them }] = await Promise.all([

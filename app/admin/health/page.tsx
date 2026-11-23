@@ -17,6 +17,7 @@ export default function Page() {
 const KINDS: [string, string][] = [
   ["evening", "Evening reminders"],
   ["makeup", "Morning make-up reminders"],
+  ["week", "Weekly heads-ups"],
   ["break_morning", "Break-pact mornings"],
   ["finished", "“You finished”"],
   ["paused", "Pause notices"],
