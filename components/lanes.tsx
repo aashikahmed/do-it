@@ -27,6 +27,8 @@ function strokeFor(mark: LaneMark, lane: Lane): { stroke: string; opacity: numbe
       return { stroke: EMBER, opacity: 1, dash: "3 3" };
     case "rest":
       return { stroke: "currentColor", opacity: 0.2 };
+    case "part":
+      return { stroke: lane.color, opacity: 0.8 };
     default:
       return { stroke: "currentColor", opacity: 0.32 };
   }
@@ -158,6 +160,28 @@ export function TrackLanes({ model, unit = "day" }: { model: LanesModel; unit?: 
         );
       })}
 
+      {/* weekly pacts: a tick across the track where each week ends; the one this week ends on stands out */}
+      {run.post > 0 &&
+        model.weekEnds.map((d) => {
+          const u = d / Math.max(1, total);
+          const [x1, y1] = T.pt(T.at(u, RIN, REF), RIN);
+          const [x2, y2] = T.pt(T.at(u, ROUT, REF), ROUT);
+          const now = d === model.weekEnd;
+          return (
+            <line
+              key={d}
+              x1={r1(x1)}
+              y1={r1(y1)}
+              x2={r1(x2)}
+              y2={r1(y2)}
+              stroke="currentColor"
+              strokeOpacity={(now ? 0.95 : 0.35) * run.post}
+              strokeWidth={now ? 1.8 : 1}
+              strokeDasharray={now ? undefined : "2 2"}
+            />
+          );
+        })}
+
       {geo.map((g, k) => {
         const lane = model.lanes[k];
         const s = S(run.values[k] ?? 0, g.R) + (model.finished ? 16 * finishing : 0);
@@ -226,6 +250,11 @@ export function StraightLanes({ model, pactId }: { model: LanesModel; pactId: st
   const label = `${model.lanes.map((l) => `${first(l.name)} ${l.kept}`).join(", ")}. ${model.finished ? "Finished." : `${total - model.today} days to go.`}`;
   return (
     <svg viewBox={`0 0 300 ${H}`} role="img" aria-label={label} className="block w-full">
+      {model.weekEnds.map((d) => {
+        const x = r1(x0 + (W * d) / total);
+        const now = d === model.weekEnd;
+        return <line key={d} x1={x} x2={x} y1={0} y2={H} stroke="currentColor" strokeOpacity={now ? 0.9 : 0.35} strokeWidth={now ? 1.6 : 1} strokeDasharray={now ? undefined : "2 2"} />;
+      })}
       {model.lanes.map((lane, k) => {
         const y = 2 + k * (h + gap);
         const v = Math.min(total, run.values[k] ?? 0);

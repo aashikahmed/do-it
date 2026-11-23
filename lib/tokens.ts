@@ -25,6 +25,8 @@ export interface Token {
 }
 
 export interface TokensModel {
+  /** the pact's first day: weeks (and the home card's strip) start on its weekday */
+  start: Day;
   total: number;
   days: DayMark[];
   /** today, in days from the start (total once the pact has ended) */
@@ -105,7 +107,7 @@ export function buildTokens({ pact, phase, userId, checkins, misses, today }: In
     weeks.push({ from, to, clean: c, target });
   }
 
-  return { total, days, todayAt, cleanToday: days[todayAt] === "clean", clean: count, goal, tokens, next, weeks, finished: ended };
+  return { start: pact.start_date, total, days, todayAt, cleanToday: days[todayAt] === "clean", clean: count, goal, tokens, next, weeks, finished: ended };
 }
 
 /** the highest token earned, for "you just earned one" */

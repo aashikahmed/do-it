@@ -1,5 +1,6 @@
 "use client";
 
+import { addDays, formatDay } from "@/lib/dates";
 import type { ReactNode } from "react";
 import type { TokensModel } from "@/lib/tokens";
 import { useRun } from "./use-run";
@@ -262,10 +263,28 @@ export function TokenStrip({ model: t, pactId, light = false }: { model: TokensM
     }
   }
   const label = `This week ${clean} of ${wk.target} clean. ${t.next ? `${t.next.need} to the ${t.next.m}-day token.` : ""}`;
+  // weeks start on the pact's own weekday: letter each day, and mark where this week ends
+  const letters = [];
+  for (let i = wk.from; i < wk.to; i++) {
+    const cx = (i - wk.from) * cs + cs / 2;
+    const isToday = !t.finished && i === t.todayAt;
+    letters.push(
+      <text key={i} x={cx} y={37} textAnchor="middle" fill="currentColor" fillOpacity={isToday ? 1 : 0.7} style={font(isToday ? 800 : 700, 9)}>
+        {formatDay(addDays(t.start, i), { weekday: "narrow" })}
+      </text>,
+    );
+    if (i === wk.to - 1 && !t.finished)
+      letters.push(
+        <text key="ends" x={cx} y={46} textAnchor="middle" fill="currentColor" fillOpacity={0.75} style={font(600, 8)}>
+          ends
+        </text>,
+      );
+  }
   return (
-    <svg viewBox="0 0 300 56" role="img" aria-label={label} className="block w-full">
+    <svg viewBox="0 0 300 62" role="img" aria-label={label} className="block w-full">
       {cells}
-      <text x={0} y={48} fill="currentColor" style={font(800, 11)}>
+      {letters}
+      <text x={0} y={58} fill="currentColor" style={font(800, 11)}>
         This week {clean} of {wk.target}
       </text>
       {earned.slice(-2).map((x, k, arr) => (

@@ -6,6 +6,8 @@ import { buildLanes } from "@/lib/lanes";
 import { buildTokens } from "@/lib/tokens";
 import { StraightLanes } from "./lanes";
 import { TokenStrip } from "./tokens";
+import { WeekSquares } from "./week-strip";
+import { weekDays } from "@/lib/week";
 
 export function PactCard({ b, me }: { b: PactBundle; me: string }) {
   const line = statusLine(b, me);
@@ -13,7 +15,9 @@ export function PactCard({ b, me }: { b: PactBundle; me: string }) {
   const isBreak = b.pact.kind === "break";
   const makeUp = !isBreak && owesMakeUp(b, me);
   const ended = b.state.phase === "ended";
-  const lanes = isBreak ? null : buildLanes({ pact: b.pact, state: b.state, members: b.members, me, today: b.today, light: ended });
+  const lanes = isBreak ? null : buildLanes({ pact: b.pact, state: b.state, members: b.members, me, today: b.today, light: ended, checkins: b.checkins });
+  // weekly build pacts: your week, day by day, so it's clear where it ends
+  const week = !isBreak ? weekDays(b, me) : null;
   const tokens = isBreak ? buildTokens({ pact: b.pact, phase: b.state.phase, userId: me, checkins: b.checkins, misses: b.misses, today: b.today }) : null;
 
   return (
@@ -46,6 +50,11 @@ export function PactCard({ b, me }: { b: PactBundle; me: string }) {
       {b.state.phase !== "upcoming" && (
         <div className="mt-4">
           {tokens ? <TokenStrip model={tokens} pactId={b.pact.id} light={ended} /> : lanes && <StraightLanes model={lanes} pactId={b.pact.id} />}
+        </div>
+      )}
+      {week && (
+        <div className="mt-3">
+          <WeekSquares week={week} today={b.today} />
         </div>
       )}
 
