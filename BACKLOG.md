@@ -48,27 +48,28 @@ Open questions:
 - Later: rotating picks ("this week's ideas"), what's popular in the app, seasonal sets (January, exam season).
 - Could the signed-out landing page show a few as well?
 
-### Show where the week ends
-Added 2026-11-19, reworked 2026-11-23 · `in progress`: A + C shipped in #29, B next, then D
-
-People in weekly pacts can't tell when their week starts or ends. A pact's week starts on its start day (start on a Wednesday and weeks run Wednesday to Tuesday), and nothing on screen says so; most people assume Monday to Sunday. Since #20 the week's end decides whether you lose your own freeze or get paused (one silent week), and #25's "paused at midnight" warning only shows after a week ends, so on 2+ a week pacts it never shows for a quiet week. Proposal with mockups (v2): https://claude.ai/artifact/AQk7KPY3yJbuJgyYJPK1dD
-
-- A: the end day on every weekly line ("Week 2 of 4, ends Tuesday", "1 more by Tuesday"), pushes and nudges included; drop "to keep the chain" now that the chain is gone.
-- B: build pacts get the home-card week strip break pacts already have (7 squares from the pact's weekday, day letters, "ends"); week ticks and faint partial paint on the lanes; 7 dots per person in the roster; day letters on the break-pact strip.
-- C: outcomes for the week in progress (next to `ifMissed`): tight, short (a freeze will cover it), heading for a pause ("One check-in by Tuesday and Jon isn't paused"); a push on the week's last morning to anyone still short (build pacts only).
-- D: "Weeks will run Wednesday to Tuesday" on the create start step, a "Next Monday" option, the same line on the invite page.
-- Still parked: Monday-to-Sunday weeks for every pact. Lanes, tokens, the Earlier calendar and the quiet-week pause all count from the start day now.
-
-Open questions:
-- Ship A + C first, then B, then D?
-- Go again: keep the old round's weekday (start on the next matching day), or start today and say what the weeks will be?
-- The comment above the weekly "week closed" news in `app/api/cron/reminders/route.ts` says Monday morning; it's the morning after the pact's week ends. Fix it with A.
-
 ## Deferred
 
 Things we decided not to do yet during other work. None yet.
 
 ## Shipped or dropped
+
+### Show where the week ends
+Added 2026-11-19, reworked 2026-11-23 · `shipped` in [#29](https://github.com/aashikahmed/do-it/pull/29) (A + C), [#30](https://github.com/aashikahmed/do-it/pull/30) (B) and [#31](https://github.com/aashikahmed/do-it/pull/31) (D)
+
+People in weekly pacts can't tell when their week starts or ends. A pact's week starts on its start day (start on a Wednesday and weeks run Wednesday to Tuesday), and nothing on screen says so; most people assume Monday to Sunday. Since #20 the week's end decides whether you lose your own freeze or get paused (one silent week), and #25's "paused at midnight" warning only shows after a week ends, so on 2+ a week pacts it never shows for a quiet week. Proposal with mockups (v2): https://claude.ai/artifact/AQk7KPY3yJbuJgyYJPK1dD
+
+- A: the end day on every weekly line ("Week 2 of 4, ends Tuesday", "1 more by Tuesday"), pushes and nudges included; drop "to keep the chain" now that the chain is gone.
+- B: build pacts get the home-card week strip break pacts already have (7 squares from the pact's weekday, day letters, "ends"); week ticks and faint partial paint on the lanes; 7 dots per person in the roster; day letters on the break-pact strip.
+- C: outcomes for the week in progress (next to `ifMissed`): tight, short (a freeze will cover it), heading for a pause ("One check-in by Tuesday and Jon isn't paused"); a morning push the first day a week turns tight and on the last day of a silent week, and the 8pm push reworded and skipped for weeks that can't be kept (build pacts only).
+- D: "Weeks will run Wednesday to Tuesday" on the create start step, a "Next Monday" option, the same line on the invite page.
+- Still parked: Monday-to-Sunday weeks for every pact. Lanes, tokens, the Earlier calendar and the quiet-week pause all count from the start day now.
+
+Decided: Go again starts today and says what the weeks will be (keeping the old weekday would need a SQL change and could delay a round by up to 6 days).
+
+Still open:
+- Is the 8pm push on top of the morning heads-up too much on tight days? Watch the `week` count on the admin Health page.
+- Other copy still mentions the chain (create flow "One link per week", the alerts card "when the chain is at risk").
 
 ### Log a day you forgot
 Added 2026-11-19 · `shipped` in [#26](https://github.com/aashikahmed/do-it/pull/26)

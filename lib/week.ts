@@ -6,7 +6,7 @@
 // anymore, and then what the week's end brings mirrors the engine in lib/streak.ts (a freeze, a pause, or a break).
 // Break pacts never get any of this: we never chase someone about a habit they're giving up.
 
-import { addDays, diffDays, formatDay, type Day } from "./dates";
+import { addDays, diffDays, formatDay, weekdayOf, type Day } from "./dates";
 import type { Cadence, Kind, PactState } from "./streak";
 
 export type WeekPace = "done" | "ok" | "tight" | "short";
@@ -152,6 +152,22 @@ export function weekNote(o: WeekOutlook, today: Day, name?: string): string | nu
 /** does this note need attention (worded in ember on screen)? A freeze quietly covering a week doesn't. */
 export function weekAtRisk(o: WeekOutlook | null) {
   return !!o && (o.pace === "tight" || (o.pace === "short" && o.ifShort !== "freeze"));
+}
+
+// ── choosing when a pact starts ──
+
+/** "Wednesday to Tuesday": the weekdays a pact's weeks run, for one that starts on `start` */
+export function weeksRun(start: Day) {
+  return `${weekday(start)} to ${weekday(addDays(start, 6))}`;
+}
+
+/**
+ * When a new pact can start, as days from today: today, tomorrow, and for weekly pacts the next Monday too, so
+ * anyone who wants Monday-to-Sunday weeks can have them (unless today or tomorrow already is a Monday).
+ */
+export function startOffsets(today: Day, weekly: boolean): number[] {
+  const toMonday = (8 - weekdayOf(today)) % 7;
+  return weekly && toMonday > 1 ? [0, 1, toMonday] : [0, 1];
 }
 
 // ── the week, day by day (for the strip on the home card and the dots in the roster) ──

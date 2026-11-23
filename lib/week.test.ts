@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { addDays, type Day } from "./dates";
 import { computePactState, type PactCore } from "./streak";
-import { daysNeeded, weekAtRisk, weekDays, weekEndOn, weekEndsText, weekEvening, weekHeadsUp, weekNote, weekOutlook, weekRange } from "./week";
+import { daysNeeded, startOffsets, weekAtRisk, weekDays, weeksRun, weekEndOn, weekEndsText, weekEvening, weekHeadsUp, weekNote, weekOutlook, weekRange } from "./week";
 
 // Hit the gym, 3 times a week for 4 weeks, from Wednesday 11 November: weeks run Wednesday to Tuesday.
 // Week 2 is Wed 18 to Tue 24 November.
@@ -198,5 +198,20 @@ describe("weekDays", () => {
   it("only for weekly build pacts", () => {
     expect(weekDays(setup({ today: MON, week2: {}, kind: "break" }).b, Y)).toBeNull();
     expect(weekDays(setup({ today: MON, week2: {}, cadence: "daily" }).b, Y)).toBeNull();
+  });
+});
+
+describe("starting a pact", () => {
+  it("offers next Monday for weekly pacts, unless today or tomorrow is one", () => {
+    expect(startOffsets("2026-11-25", true)).toEqual([0, 1, 5]); // Wednesday: Monday 30th
+    expect(startOffsets("2026-11-28", true)).toEqual([0, 1, 2]); // Saturday
+    expect(startOffsets("2026-11-29", true)).toEqual([0, 1]); // Sunday: tomorrow is Monday
+    expect(startOffsets(MON, true)).toEqual([0, 1]); // Monday: today is
+    expect(startOffsets("2026-11-25", false)).toEqual([0, 1]);
+  });
+
+  it("names the weeks", () => {
+    expect(weeksRun(START)).toBe("Wednesday to Tuesday");
+    expect(weeksRun("2026-11-30")).toBe("Monday to Sunday");
   });
 });

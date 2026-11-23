@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { optionalUser } from "@/lib/data";
 import { cadenceText, listNames, startsText } from "@/lib/view";
+import { weeksRun } from "@/lib/week";
 import { todayIn, diffDays } from "@/lib/dates";
 import { targetText, type Direction, type Measure } from "@/lib/measure";
 import { JoinButton } from "./join-button";
@@ -75,6 +76,8 @@ async function Invite({ params }: { params: PageProps<"/j/[code]">["params"] }) 
         <h1 className="display mt-2 text-[64px] font-extrabold break-words">{p.title}</h1>
         <ul className="mt-6 space-y-1.5 text-[17px] font-medium opacity-90">
           <li>{cadenceText(p)}</li>
+          {/* weeks start on the pact's start day: say which, before anyone joins */}
+          {p.cadence === "weekly" && <li>Weeks run {weeksRun(p.start_date)}</li>}
           <li>{started ? `Day ${Math.min(diffDays(p.start_date, today) + 1, p.duration_days)} of ${p.duration_days}` : startsText(p.start_date, today)}</li>
           {p.measure !== "none" && p.kind !== "break" && <li>{targetText(p) ?? `Tracking ${p.measure === "time" ? "time" : p.unit}`}</li>}
           <li>{listNames(names, 3)} {names.length === 1 ? "is" : "are"} in</li>

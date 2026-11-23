@@ -17,6 +17,7 @@ import { MEASURES, type Direction, type Measure, type Tracking } from "@/lib/mea
 import { addDays, deviceTimeZone, todayIn } from "@/lib/dates";
 import { freezesFor } from "@/lib/streak";
 import { breakTitle, cadenceText, inSentence, restDaysText, type BreakMode } from "@/lib/view";
+import { startOffsets, weeksRun } from "@/lib/week";
 import type { PactColor } from "@/lib/data";
 
 type Draft = {
@@ -27,7 +28,8 @@ type Draft = {
   cadence: "daily" | "weekly";
   timesPerWeek: number;
   durationDays: number;
-  startOffset: 0 | 1;
+  /** days from today: 0, 1, or the next Monday for weekly pacts */
+  startOffset: number;
   measure: Measure;
   direction: Direction;
   unit: string;
@@ -161,7 +163,7 @@ export function CreateFlow() {
       cadence: d.cadence,
       timesPerWeek: d.cadence === "daily" ? 7 : d.timesPerWeek,
       durationDays: d.durationDays,
-      startDate: addDays(todayIn(tz), d.startOffset),
+      startDate: addDays(todayIn(tz), startFor(tz, d.startOffset, d.cadence === "weekly")),
       timezone: tz,
       measure: d.measure,
       direction: d.measure === "time" || d.measure === "weight" ? d.direction : "up",
@@ -184,7 +186,7 @@ export function CreateFlow() {
       cadence: breakCadence,
       timesPerWeek: d.mode === "days" ? 7 - d.allowance : 7,
       durationDays: d.durationDays,
-      startDate: addDays(todayIn(tz), d.startOffset),
+      startDate: addDays(todayIn(tz), startFor(tz, d.startOffset, breakCadence === "weekly")),
       timezone: tz,
       measure: amount ? "count" : "none",
       direction: "down",
@@ -440,18 +442,8 @@ export function CreateFlow() {
                     </button>
                   ))}
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Start">
-                  {([0, 1] as const).map((o) => (
-                    <button
-                      key={o}
-                      role="radio"
-                      aria-checked={d.startOffset === o}
-                      onClick={() => set({ startOffset: o })}
-                      className={`h-14 rounded-[18px] text-[17px] font-bold ${d.startOffset === o ? "bg-ink text-white" : "bg-paper"}`}
-                    >
-                      {o === 0 ? "Start today" : "Start tomorrow"}
-                    </button>
-                  ))}
+                <div className="mt-4">
+                  <StartPicker offset={d.startOffset} weekly={breakCadence === "weekly"} prefix="Start " onPick={(o) => set({ startOffset: o })} />
                 </div>
                 <div className="mt-5 rounded-[22px] bg-[#e3e6ff] p-4 text-[16px] leading-snug">
                   <p>
@@ -574,19 +566,7 @@ export function CreateFlow() {
                   ))}
                 </div>
                 <p className="mt-8 mb-3 text-[15px] font-bold text-ink-2">Starting</p>
-                <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Start">
-                  {([0, 1] as const).map((o) => (
-                    <button
-                      key={o}
-                      role="radio"
-                      aria-checked={d.startOffset === o}
-                      onClick={() => set({ startOffset: o })}
-                      className={`h-14 rounded-[18px] text-[17px] font-bold ${d.startOffset === o ? "bg-ink text-white" : "bg-paper"}`}
-                    >
-                      {o === 0 ? "Today" : "Tomorrow"}
-                    </button>
-                  ))}
-                </div>
+                <StartPicker offset={d.startOffset} weekly={d.cadence === "weekly"} onPick={(o) => set({ startOffset: o })} />
                 <p className="mt-6 text-[15px] leading-snug text-ink-2">
                   Everyone gets {freezesFor(d.cadence, d.durationDays)} {freezesFor(d.cadence, d.durationDays) === 1 ? "freeze" : "freezes"} of their own. A miss uses one, automatically.
                 </p>
@@ -907,4 +887,41 @@ function LookPreview({ d }: { d: Draft }) {
       model={{ total: d.durationDays, today: 0, finished: false, hidden: 0, weekEnds: [], weekEnd: null, lanes: [{ userId: "you", name: "You", avatar: null, color, ink: inkOn(color), segs: [], pos: 0, kept: 0 }] }}
     />
   );
+}
+
+/**
+ * Today, tomorrow, or (weekly pacts) next Monday. A weekly pact's weeks start on its start day, so say which weekdays
+ * they'll run: whoever sets it up picks the week for everyone.
+ */
+function StartPicker({ offset, weekly, prefix = "", onPick }: { offset: number; weekly: boolean; prefix?: string; onPick: (o: number) => void }) {
+  const today = todayIn(deviceTimeZone());
+  const options = startOffsets(today, weekly);
+  // switched to daily (or the day moved on): fall back to today
+  const chosen = options.includes(offset) ? offset : 0;
+  // three buttons don't fit "Start tomorrow"
+  const pre = options.length === 3 ? "" : prefix;
+  const label = (o: number) => (o === 0 ? `${pre}today` : o === 1 ? `${pre}tomorrow` : `${pre}Monday`);
+  return (
+    <>
+      <div className={`grid gap-2 ${options.length === 3 ? "grid-cols-3" : "grid-cols-2"}`} role="radiogroup" aria-label="Start">
+        {options.map((o) => (
+          <button
+            key={o}
+            role="radio"
+            aria-checked={chosen === o}
+            onClick={() => onPick(o)}
+            className={`h-14 rounded-[18px] text-[17px] font-bold ${chosen === o ? "bg-ink text-white" : "bg-paper"}`}
+          >
+            {label(o)[0].toUpperCase() + label(o).slice(1)}
+          </button>
+        ))}
+      </div>
+      {weekly && <p className="mt-3 text-[15px] leading-snug font-semibold text-ink-2">Weeks will run {weeksRun(addDays(today, chosen))}.</p>}
+    </>
+  );
+}
+
+/** the start offset to save: a Monday picked for a weekly pact falls back to today if it's daily now */
+function startFor(tz: string, offset: number, weekly: boolean) {
+  return startOffsets(todayIn(tz), weekly).includes(offset) ? offset : 0;
 }
