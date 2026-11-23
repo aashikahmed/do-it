@@ -97,7 +97,20 @@ export interface Period {
   culprits: string[];
   /** missed it with no freezes left, so they're paused and the period counts without them */
   paused: string[];
+  /**
+   * a late period only: what happens to each person who still owes it if they don't make it up before it closes.
+   * Only "break" puts the chain at risk; the rest is their own business (a freeze, or a pause).
+   */
+  ifMissed: Record<string, LateOutcome>;
 }
+
+/**
+ * freeze: one of their own freezes covers it. quiet: it's their 3rd quiet day in a row (1 silent week), so it's
+ * covered and they're paused from the next one. out: no freezes left, so they're paused and it counts without them.
+ * without: no freezes left, but they've already checked in since, so it counts without them and they stay in.
+ * break: nobody else kept it, so the chain breaks.
+ */
+export type LateOutcome = "freeze" | "quiet" | "out" | "without" | "break";
 
 /** why someone is paused: 3 quiet days in a row (1 silent week), or a miss with no freezes left */
 export type PauseReason = "quiet" | "out";
@@ -287,6 +300,7 @@ export function computePactState(
     let status: PeriodStatus;
     let culprits: string[] = [];
     const pausedHere: string[] = [];
+    const ifMissed: Record<string, LateOutcome> = {};
     if (start > today) status = "upcoming";
     else if (complete) status = "done";
     else {
@@ -300,7 +314,20 @@ export function computePactState(
         // still open, or yesterday that can still be made up; a freeze already spent on it holds
         const allFrozen = missedBy.length > 0 && missedBy.every(hasFreeze);
         status = ended ? (allFrozen ? "frozen" : "late") : "open";
-        if (status === "late") culprits = missedBy.filter((u) => !hasFreeze(u));
+        if (status === "late") {
+          culprits = missedBy.filter((u) => !hasFreeze(u));
+          // what midnight brings for each of them, the same way the branch below settles it
+          const cantPay = culprits.some((u) => (left[u] ?? 0) <= 0);
+          const breaks = untouched || (keeping.length === 0 && cantPay);
+          // checked in since: a pause would end straight away, so there isn't one
+          const back = (u: string) => !!daysIn[u]?.some((x) => x > end);
+          for (const u of culprits) {
+            if (breaks) ifMissed[u] = "break";
+            else if ((left[u] ?? 0) <= 0) ifMissed[u] = back(u) ? "without" : "out";
+            else if (!back(u) && (quiet[u] ?? 0) + 1 >= quietLimit && (counts[u] ?? 0) === 0 && keeping.length > 0 && i + 1 < total) ifMissed[u] = "quiet";
+            else ifMissed[u] = "freeze";
+          }
+        }
       } else {
         // past the make-up window: everyone who missed uses their own freeze, or is paused if they're out
         const auto: string[] = [];
@@ -360,6 +387,7 @@ export function computePactState(
       slips,
       culprits,
       paused: [...pausedHere],
+      ifMissed,
     });
   }
 

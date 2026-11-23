@@ -4,7 +4,10 @@ import { AnimatePresence, motion } from "motion/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { createPact } from "@/lib/client-actions";
-import { Chain } from "@/components/chain";
+import { StraightLanes } from "@/components/lanes";
+import { TokenStrip } from "@/components/tokens";
+import { inkOn, laneColor } from "@/lib/lanes";
+import { buildTokens } from "@/lib/tokens";
 import { ShareInvite } from "@/components/share-invite";
 import { Sheet } from "@/components/sheet";
 import Link from "next/link";
@@ -674,10 +677,7 @@ export function CreateFlow() {
                     </div>
                   </div>
                   <div className="mt-4">
-                    <Chain
-                      periods={Array.from({ length: 7 }, (_, i) => ({ index: i, start: String(i), status: i === 0 ? "open" : "upcoming" }))}
-                      size={0.86}
-                    />
+                    <LookPreview d={d} />
                   </div>
                 </div>
                 <div className="mt-4 flex justify-between" role="radiogroup" aria-label="Color">
@@ -884,5 +884,27 @@ function Toggle({ on, onChange, title, body }: { on: boolean; onChange: (v: bool
         <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-[left] ${on ? "left-[22px]" : "left-0.5"}`} />
       </span>
     </button>
+  );
+}
+
+/** The "Look" step's card: what the home screen will show on day one, in the chosen color. */
+function LookPreview({ d }: { d: Draft }) {
+  if (d.kind === "break") {
+    const tokens = buildTokens({
+      pact: { kind: "break", cadence: d.cadence, times_per_week: d.timesPerWeek, duration_days: d.durationDays, start_date: "2026-01-01", target: null, limit_step: null, rest_days: d.restDays },
+      phase: "active",
+      userId: "you",
+      checkins: [],
+      misses: [],
+      today: "2026-01-01",
+    });
+    return <TokenStrip model={tokens} pactId="preview" />;
+  }
+  const color = laneColor(d.color, 0);
+  return (
+    <StraightLanes
+      pactId="preview"
+      model={{ total: d.durationDays, today: 0, finished: false, hidden: 0, lanes: [{ userId: "you", name: "You", avatar: null, color, ink: inkOn(color), segs: [], pos: 0, kept: 0 }] }}
+    />
   );
 }

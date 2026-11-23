@@ -1,16 +1,20 @@
 import Link from "next/link";
 import type { PactBundle } from "@/lib/data";
-import { answerOn, didTheirPart, needsMe, owesMakeUp, progressText, statusLine, streakUnit } from "@/lib/view";
+import { answerOn, didTheirPart, isPaused, needsMe, owesMakeUp, pausingSoon, progressText, statusLine, streakUnit } from "@/lib/view";
 import { Avatar } from "./avatar";
-import { Chain, recentWindow } from "./chain";
+import { buildLanes } from "@/lib/lanes";
+import { buildTokens } from "@/lib/tokens";
+import { StraightLanes } from "./lanes";
+import { TokenStrip } from "./tokens";
 
 export function PactCard({ b, me }: { b: PactBundle; me: string }) {
   const line = statusLine(b, me);
   const mine = needsMe(b, me);
   const isBreak = b.pact.kind === "break";
   const makeUp = !isBreak && owesMakeUp(b, me);
-  const recent = recentWindow(b.state.periods, b.state.current?.index ?? null, 7);
   const ended = b.state.phase === "ended";
+  const lanes = isBreak ? null : buildLanes({ pact: b.pact, state: b.state, members: b.members, me, today: b.today, light: ended });
+  const tokens = isBreak ? buildTokens({ pact: b.pact, phase: b.state.phase, userId: me, checkins: b.checkins, misses: b.misses, today: b.today }) : null;
 
   return (
     <Link
@@ -41,7 +45,7 @@ export function PactCard({ b, me }: { b: PactBundle; me: string }) {
 
       {b.state.phase !== "upcoming" && (
         <div className="mt-4">
-          <Chain periods={recent} perRow={7} tone={ended ? "onLight" : "onColor"} size={0.86} />
+          {tokens ? <TokenStrip model={tokens} pactId={b.pact.id} light={ended} /> : lanes && <StraightLanes model={lanes} pactId={b.pact.id} />}
         </div>
       )}
 
@@ -56,6 +60,7 @@ export function PactCard({ b, me }: { b: PactBundle; me: string }) {
               size={30}
               ring="#fff"
               done={!ended && b.state.phase === "active" && (isBreak ? answerOn(b, m.user_id, b.today) === "yes" : didTheirPart(b, m.user_id))}
+              paused={b.state.phase !== "active" ? undefined : isPaused(b, m.user_id) ? "now" : m.user_id !== me && pausingSoon(b, m.user_id) ? "soon" : undefined}
             />
           ))}
         </div>
