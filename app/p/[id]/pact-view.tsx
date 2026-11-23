@@ -9,7 +9,8 @@ import { Avatar } from "@/components/avatar";
 import { HeartRow } from "@/components/hearts";
 import { Burst } from "@/components/burst";
 import { BottomDock } from "@/components/bottom-dock";
-import { Chain } from "@/components/chain";
+import { TrackLanes } from "@/components/lanes";
+import { TokenCalendar } from "@/components/tokens";
 import { HoldButton } from "@/components/hold-button";
 import { Live } from "@/components/live";
 import { PushCard } from "@/components/push";
@@ -46,6 +47,8 @@ import { deadlineText, pactDeadline, tzFor } from "@/lib/reminders";
 import { useViewerTimeZone } from "@/components/time-zone";
 import { FEELS, formatAvg, formatValue, isBetter, progressStats, targetText, type Feel, type Tracking } from "@/lib/measure";
 import { keptCount, type Series } from "@/lib/rounds";
+import { buildLanes } from "@/lib/lanes";
+import { buildTokens, topToken } from "@/lib/tokens";
 import { logAvatarTap } from "@/lib/track";
 import { ValueInput } from "@/components/measure-input";
 import { Activity } from "./activity";
@@ -63,7 +66,7 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
   return (
     <main data-color={pact.color} className="min-h-dvh pb-6">
       <Live pactIds={[pact.id]} days={[{ tz: pact.timezone, today: b.today }]} />
-      <Hero b={b} me={me} onMenu={() => setMenuOpen(true)} />
+      <Hero b={b} me={me} onMenu={() => setMenuOpen(true)} onCelebrate={setBurst} />
 
       {state.phase !== "upcoming" && (
         <div className="sticky top-0 z-20 bg-mist/90 px-4 pt-safe pb-1 backdrop-blur-md [padding-top:max(env(safe-area-inset-top),8px)]">
@@ -129,14 +132,32 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
 
 // ───────────────────────── hero ─────────────────────────
 
-function Hero({ b, me, onMenu }: { b: PactBundle; me: Me; onMenu: () => void }) {
+function Hero({ b, me, onMenu, onCelebrate }: { b: PactBundle; me: Me; onMenu: () => void; onCelebrate: (c: { title: string; subtitle?: string }) => void }) {
   const { pact, state } = b;
   const ended = state.phase === "ended";
-  const currentIndex = state.current?.index ?? null;
-  const shown = useMemo(() => chainWindow(state.periods, currentIndex), [state.periods, currentIndex]);
   const big = ended ? keptCount(state) : state.streak;
   const unit = pact.cadence === "daily" ? "day" : "week";
   const isBreak = pact.kind === "break";
+  const lanes = useMemo(
+    () => (isBreak ? null : buildLanes({ pact, state, members: b.members, me: me.id, today: b.today })),
+    [isBreak, pact, state, b.members, me.id, b.today],
+  );
+  const tokens = useMemo(
+    () => (isBreak ? buildTokens({ pact, phase: state.phase, userId: me.id, checkins: b.checkins, misses: b.misses, today: b.today }) : null),
+    [isBreak, pact, state.phase, me.id, b.checkins, b.misses, b.today],
+  );
+  // a token you haven't seen yet lands once the calendar has filled in (the finish has its own moment)
+  const tokenLanded = () => {
+    if (!tokens || ended) return;
+    const top = topToken(tokens);
+    const key = `doit-token-${pact.id}-${me.id}`;
+    try {
+      if (top > Number(localStorage.getItem(key) ?? 0)) {
+        localStorage.setItem(key, String(top));
+        onCelebrate({ title: `${top}-day token`, subtitle: `${top} clean ${top === 1 ? "day" : "days"}. It's yours to keep.` });
+      }
+    } catch {}
+  };
   const label = ended
     ? `of ${state.periods.length} ${unit}s kept`
     : !isBreak || pact.cadence === "weekly"
@@ -213,26 +234,11 @@ function Hero({ b, me, onMenu }: { b: PactBundle; me: Me; onMenu: () => void }) 
 
       {state.phase !== "upcoming" && (
         <div className="mt-6">
-          <Chain periods={shown} perRow={7} fluid />
-          {shown.length < state.periods.length && (
-            <p className="mt-2 text-[13px] font-medium opacity-70">
-              Showing {pact.cadence === "daily" ? "days" : "weeks"} {shown[0].index + 1}–{shown[shown.length - 1].index + 1} of {state.periods.length}
-            </p>
-          )}
+          {tokens ? <TokenCalendar model={tokens} onSettled={tokenLanded} /> : lanes && <TrackLanes model={lanes} unit={pact.cadence === "daily" ? "day" : "week"} />}
         </div>
       )}
     </section>
   );
-}
-
-/** Long pacts: show a 6-row window around now instead of every link. */
-function chainWindow<T extends { index: number }>(periods: T[], current: number | null) {
-  const rows = 6 * 7;
-  if (periods.length <= rows) return periods;
-  const anchor = current ?? periods.length - 1;
-  const rowStart = Math.floor(anchor / 7) * 7;
-  const start = Math.max(0, Math.min(rowStart - 4 * 7, periods.length - rows));
-  return periods.slice(start, start + rows);
 }
 
 // ───────────────────────── roster ─────────────────────────
