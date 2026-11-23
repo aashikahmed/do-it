@@ -11,7 +11,7 @@ import { addDays, isValidTimeZone, todayIn } from "@/lib/dates";
 import { firstName, listNames, makeUpLabel } from "@/lib/view";
 import { planFreezes } from "@/lib/streak";
 import { deadlineText, pactDeadline, tzFor } from "@/lib/reminders";
-import { dayName, weekEndOn } from "@/lib/week";
+import { dayName, weekEndOn, weeksRun } from "@/lib/week";
 
 export type ActionResult<T = undefined> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -212,7 +212,7 @@ export async function startNextRound(pactId: string): Promise<ActionResult<{ id:
   after(async () => {
     const admin = createAdminClient();
     const [{ data: pact }, { data: members }, name] = await Promise.all([
-      admin.from("pacts").select("title,emoji,round,created_by,kind").eq("id", id).single(),
+      admin.from("pacts").select("title,emoji,round,created_by,kind,cadence,start_date").eq("id", id).single(),
       admin.from("pact_members").select("user_id").eq("pact_id", id).is("left_on", null),
       displayName(userId),
     ]);
@@ -222,7 +222,7 @@ export async function startNextRound(pactId: string): Promise<ActionResult<{ id:
       (members ?? []).map((m) => m.user_id).filter((u) => u !== userId),
       {
         title: pact.kind === "break" ? `${pact.emoji} Round ${pact.round} is on` : `${pact.emoji} Round ${pact.round} of ${pact.title} is on`,
-        body: `${name.split(" ")[0]} started it. You're in, starting today.`,
+        body: `${name.split(" ")[0]} started it. You're in, starting today.${pact.cadence === "weekly" ? ` Weeks run ${weeksRun(pact.start_date)}.` : ""}`,
         url: `/p/${id}`,
         tag: `pact-${id}`,
       },

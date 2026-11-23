@@ -43,7 +43,7 @@ import {
   subjectOf,
 } from "@/lib/view";
 import { limitOn, type Period } from "@/lib/streak";
-import { dayName, daysNeeded, weekAtRisk, weekDays, weekNote, weekOutlook, weekRange } from "@/lib/week";
+import { dayName, daysNeeded, weekAtRisk, weekDays, weekNote, weekOutlook, weekRange, weeksRun } from "@/lib/week";
 import { WeekDots, WeekLetters } from "@/components/week-strip";
 import { deadlineText, pactDeadline, tzFor } from "@/lib/reminders";
 import { useViewerTimeZone } from "@/components/time-zone";
@@ -1556,6 +1556,8 @@ function GoAgain({ b, me, series }: { b: PactBundle; me: Me; series: Series | nu
       <p className="display text-[32px] font-extrabold">Go again?</p>
       <p className="mt-2 text-[16px] font-medium opacity-85">
         Round {pact.round + 1}: same pact{group ? ", same people" : ""}, starting today. {cadenceText(pact)}.
+        {/* a new round's weeks start on the day it starts, which may not be this round's weekday */}
+        {pact.cadence === "weekly" && ` Weeks will run ${weeksRun(b.today)}.`}
       </p>
       <button
         onClick={go}
@@ -1655,6 +1657,7 @@ function MenuSheet({ b, me, open, onClose }: { b: PactBundle; me: Me; open: bool
         )}
         <Row k="Dates" v={`${formatDay(b.pact.start_date, { day: "numeric", month: "short" })} to ${formatDay(b.state.endDate, { day: "numeric", month: "short" })}`} />
         <Row k="Freezes" v={`${myFreezes(b, me.id)} of ${b.pact.freezes_allowed} left, your own`} />
+        {b.pact.cadence === "weekly" && <Row k="Weeks run" v={weeksRun(b.pact.start_date)} />}
         <Row k="Day ends" v={`Midnight, ${b.pact.timezone.replace(/_/g, " ")}`} />
         <Row k="People" v={`${b.members.length} of 10`} />
       </dl>
