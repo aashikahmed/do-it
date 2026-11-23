@@ -52,6 +52,7 @@ import { buildTokens, topToken } from "@/lib/tokens";
 import { logAvatarTap } from "@/lib/track";
 import { ValueInput } from "@/components/measure-input";
 import { Activity } from "./activity";
+import { CatchUpCard, EarlierPanel, EarlierSheet, hasEarlierDays } from "./earlier";
 import { EditSheet, EntryFields } from "./entry";
 import { ProgressView } from "@/components/progress-view";
 
@@ -99,6 +100,7 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
         ) : (
           state.repair && <RepairCard b={b} me={me.id} />
         )}
+        <CatchUpCard b={b} me={me.id} />
         {state.phase === "ended" ? (
           <>
             <Recap b={b} me={me} />
@@ -603,7 +605,7 @@ function canLogYesterday(b: PactBundle, me: string) {
   );
 }
 
-type LogDay = "today" | "yesterday";
+type LogDay = "today" | "yesterday" | "earlier";
 type Moment = { title: string; subtitle?: string };
 type Entry = { value: number | null; note: string | null; feel: Feel | null };
 
@@ -678,7 +680,7 @@ function useLogSheet() {
 
 /** The check-in sheet for build pacts: today or yesterday, with the input for the pact's measure. */
 function LogSheet({ b, me, ctl, onCelebrate }: { b: PactBundle; me: string; ctl: ReturnType<typeof useLogSheet>; onCelebrate: Celebrate }) {
-  const title = ctl.day === "today" ? "Log today" : `Log ${formatDay(b.yesterday, { weekday: "long" })}`;
+  const title = ctl.day === "today" ? "Log today" : ctl.day === "earlier" ? "Your days" : `Log ${formatDay(b.yesterday, { weekday: "long" })}`;
   return (
     <Sheet open={ctl.open} onClose={ctl.close} title={title}>
       <LogForm key={ctl.session} b={b} me={me} day={ctl.day} setDay={ctl.setDay} onDone={ctl.close} onCelebrate={onCelebrate} />
@@ -704,6 +706,7 @@ function LogForm({
   const { pact, state } = b;
   const canToday = !b.checkins.some((c) => c.user_id === me && c.day === b.today);
   const canYesterday = canLogYesterday(b, me);
+  const tabs = ([canToday && "today", canYesterday && "yesterday", hasEarlierDays(b, me) && "earlier"] as const).filter((x): x is LogDay => !!x);
   const [value, setValue] = useState<number | null>(() => startValue(b, me));
   const [feel, setFeel] = useState<Feel | null>(null);
   const [note, setNote] = useState("");
@@ -740,9 +743,9 @@ function LogForm({
 
   return (
     <>
-      {canToday && canYesterday && (
-        <div role="radiogroup" aria-label="Which day" className="mb-4 grid grid-cols-2 gap-1 rounded-full bg-mist p-1">
-          {(["today", "yesterday"] as const).map((d) => (
+      {tabs.length > 1 && (
+        <div role="radiogroup" aria-label="Which day" className={`mb-4 grid gap-1 rounded-full bg-mist p-1 ${tabs.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+          {tabs.map((d) => (
             <button
               key={d}
               role="radio"
@@ -750,11 +753,15 @@ function LogForm({
               onClick={() => setDay(d)}
               className={`h-10 rounded-full text-[15px] font-extrabold transition-colors ${day === d ? "bg-ink text-white" : "text-ink-2"}`}
             >
-              {d === "today" ? "Today" : "Yesterday"}
+              {d === "today" ? "Today" : d === "yesterday" ? "Yesterday" : "Earlier"}
             </button>
           ))}
         </div>
       )}
+      {day === "earlier" ? (
+        <EarlierPanel b={b} me={me} onYesterday={canYesterday ? () => setDay("yesterday") : undefined} onDone={onDone} />
+      ) : (
+        <>
       {lead && <p className="mb-4 text-[16px] text-ink-2">{lead}.</p>}
       {day === "yesterday" && (
         <div role="radiogroup" aria-label="What happened" className="mb-4 space-y-2">
@@ -784,6 +791,8 @@ function LogForm({
           onComplete={save}
         />
       </div>
+        </>
+      )}
     </>
   );
 }
@@ -986,7 +995,7 @@ function BreakBar({ b, me, onCelebrate }: { b: PactBundle; me: Me; onCelebrate: 
   const left = Math.max(0, allowed - (cur?.slips[me.id] ?? 0));
   const [value, setValue] = useState<number | null>(0);
   const [busy, setBusy] = useState(false);
-  const [sheet, setSheet] = useState<"ask" | "gave-in" | "over" | "craving" | null>(null);
+  const [sheet, setSheet] = useState<"ask" | "gave-in" | "over" | "craving" | "earlier" | null>(null);
   const router = useRouter();
 
   async function yes() {
@@ -1121,8 +1130,14 @@ function BreakBar({ b, me, onCelebrate }: { b: PactBundle; me: Me; onCelebrate: 
               {weekly ? "No, I had some" : "No, I gave in"}
             </button>
           )}
+          {hasEarlierDays(b, me.id) && (
+            <button onClick={() => setSheet("earlier")} className="h-11 text-[15px] font-bold text-ink-2">
+              Answer for an earlier day
+            </button>
+          )}
         </div>
       </Sheet>
+      <EarlierSheet b={b} me={me.id} open={sheet === "earlier"} onClose={() => setSheet(null)} />
       <GiveInSheet b={b} me={me.id} when="today" over={sheet === "over" ? value : null} open={sheet === "gave-in" || sheet === "over"} onClose={() => setSheet(null)} />
       <CravingSheet b={b} me={me} open={sheet === "craving"} onClose={() => setSheet(null)} />
     </BottomDock>

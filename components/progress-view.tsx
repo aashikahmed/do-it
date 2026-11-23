@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
+import { DaySheet, rowForDay } from "@/app/p/[id]/activity";
+import { canChangeDay } from "@/lib/activity";
 import type { Checkin, Me, PactBundle } from "@/lib/data";
-import { diffDays, formatDay } from "@/lib/dates";
+import { diffDays, formatDay, type Day } from "@/lib/dates";
 import { FEELS, formatDuration, formatShort, formatValue, pactDays, progressStats, type Tracking } from "@/lib/measure";
 import { answerOn, firstName } from "@/lib/view";
 import { isRestDay } from "@/lib/streak";
@@ -20,6 +22,11 @@ export function ProgressView({ b, me }: { b: PactBundle; me: Me }) {
   const [who, setWho] = useState<Who>(people.some((p) => p.user_id === me.id) ? me.id : people[0]?.user_id ?? "all");
   const tracked = pact.measure !== "none";
   const mine = (id: string) => b.checkins.filter((c) => c.user_id === id);
+  // your own days open the same form as Change a day
+  const [pick, setPick] = useState<Day | null>(null);
+  const member = b.members.find((m) => m.user_id === me.id);
+  const canPick = (d: Day) => d !== b.today && !isRestDay(pact, d) && (d === b.yesterday || canChangeDay(pact, member, d, b.today));
+  const onPick = who === me.id && member ? { can: canPick, pick: setPick } : undefined;
 
   if (b.state.phase === "upcoming") {
     return <Empty text="Progress shows up here once the pact starts and people check in." />;
@@ -45,8 +52,9 @@ export function ProgressView({ b, me }: { b: PactBundle; me: Me }) {
 
       {tracked && who === "all" && <Compare b={b} people={people} me={me.id} />}
       {tracked && who !== "all" && <Personal b={b} t={t} checkins={mine(who)} color="var(--pact-deep)" />}
-      {who !== "all" && (pact.kind === "break" ? <DaysCalendar b={b} who={who} /> : <FeelCalendar b={b} checkins={mine(who)} />)}
+      {who !== "all" && (pact.kind === "break" ? <DaysCalendar b={b} who={who} onPick={onPick} /> : <FeelCalendar b={b} checkins={mine(who)} onPick={onPick} />)}
       {who !== "all" && <Notes b={b} t={t} checkins={mine(who)} />}
+      {pick && <DaySheet key={pick} b={b} me={me.id} row={rowForDay(b, me.id, pick)} onClose={() => setPick(null)} />}
     </div>
   );
 }
@@ -255,7 +263,34 @@ const FEEL_BG: Record<number, React.CSSProperties> = {
   3: { backgroundColor: "var(--pact)" },
 };
 
-function FeelCalendar({ b, checkins }: { b: PactBundle; checkins: Checkin[] }) {
+type OnPick = { can: (d: Day) => boolean; pick: (d: Day) => void } | undefined;
+
+/** a calendar day: a button when it's one of your own days you can fill in or change */
+function DayCell({ d, label, style, onPick }: { d: Day; label: string; style: CSSProperties; onPick: OnPick }) {
+  const cls = "flex aspect-square items-center justify-center rounded-[9px] text-[11px] font-bold";
+  if (onPick?.can(d)) {
+    return (
+      <button
+        type="button"
+        onClick={() => onPick.pick(d)}
+        aria-label={`${formatDay(d, { weekday: "long", day: "numeric", month: "long" })}: ${label}. Change it.`}
+        className={`${cls} outline-none focus-visible:ring-2 focus-visible:ring-[var(--pact)]`}
+        style={style}
+      >
+        {Number(d.slice(8))}
+      </button>
+    );
+  }
+  return (
+    <span title={`${formatDay(d)}: ${label}`} className={cls} style={style}>
+      {Number(d.slice(8))}
+    </span>
+  );
+}
+
+const TAP_HINT = "Tap one of your days to fill it in or change it.";
+
+function FeelCalendar({ b, checkins, onPick }: { b: PactBundle; checkins: Checkin[]; onPick: OnPick }) {
   const days = pactDays(b.pact.start_date, b.pact.duration_days, b.today);
   const byDay = new Map(checkins.map((c) => [c.day, c]));
   const rated = checkins.filter((c) => c.feel !== null);
@@ -272,24 +307,24 @@ function FeelCalendar({ b, checkins }: { b: PactBundle; checkins: Checkin[] }) {
           </span>
         )}
       </div>
+      {onPick && <p className="mt-1 text-[13px] text-ink-3">{TAP_HINT}</p>}
       {days.length === 0 ? null : (
-        <div className="mt-3 grid grid-cols-7 gap-1.5" role="img" aria-label={`${rated.length} rated check-ins over ${days.length} days`}>
+        <div className="mt-3 grid grid-cols-7 gap-1.5" role={onPick ? undefined : "img"} aria-label={onPick ? undefined : `${rated.length} rated check-ins over ${days.length} days`}>
           {days.map((d) => {
             const c = byDay.get(d);
             const label = c ? (c.feel ? FEELS[c.feel - 1].label : "Checked in") : "No check-in";
             return (
-              <span
+              <DayCell
                 key={d}
-                title={`${formatDay(d)}: ${label}`}
-                className="flex aspect-square items-center justify-center rounded-[9px] text-[11px] font-bold"
+                d={d}
+                label={label}
+                onPick={onPick}
                 style={{
                   ...(c ? (c.feel ? FEEL_BG[c.feel] : { backgroundColor: "var(--pact-soft)" }) : { backgroundColor: "transparent" }),
                   boxShadow: c ? undefined : "inset 0 0 0 1.5px var(--color-line)",
                   color: c?.feel === 3 ? "var(--pact-ink)" : "var(--color-ink-3)",
                 }}
-              >
-                {Number(d.slice(8))}
-              </span>
+              />
             );
           })}
         </div>
@@ -311,7 +346,7 @@ function FeelCalendar({ b, checkins }: { b: PactBundle; checkins: Checkin[] }) {
 }
 
 /** Break pacts: each day kept, given in, off, or not answered. Nothing to rate, so no feel colours. */
-function DaysCalendar({ b, who }: { b: PactBundle; who: string }) {
+function DaysCalendar({ b, who, onPick }: { b: PactBundle; who: string; onPick: OnPick }) {
   const days = pactDays(b.pact.start_date, b.pact.duration_days, b.today);
   const kinds = days.map((d) => (isRestDay(b.pact, d) ? "off" : answerOn(b, who, d) ?? "none"));
   const kept = kinds.filter((k) => k === "yes").length;
@@ -331,12 +366,11 @@ function DaysCalendar({ b, who }: { b: PactBundle; who: string }) {
           {kept} kept{gave ? `, ${gave} gave in` : ""}
         </span>
       </div>
+      {onPick && <p className="mt-1 text-[13px] text-ink-3">{TAP_HINT}</p>}
       {days.length > 0 && (
-        <div className="mt-3 grid grid-cols-7 gap-1.5" role="img" aria-label={`${kept} days kept and ${gave} given in, over ${days.length} days`}>
+        <div className="mt-3 grid grid-cols-7 gap-1.5" role={onPick ? undefined : "img"} aria-label={onPick ? undefined : `${kept} days kept and ${gave} given in, over ${days.length} days`}>
           {days.map((d, i) => (
-            <span key={d} title={`${formatDay(d)}: ${label[kinds[i]]}`} className="flex aspect-square items-center justify-center rounded-[9px] text-[11px] font-bold" style={style[kinds[i]]}>
-              {Number(d.slice(8))}
-            </span>
+            <DayCell key={d} d={d} label={label[kinds[i]]} style={style[kinds[i]]} onPick={onPick} />
           ))}
         </div>
       )}

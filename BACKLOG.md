@@ -54,6 +54,15 @@ Things we decided not to do yet during other work. None yet.
 
 ## Shipped or dropped
 
+### Log a day you forgot
+Added 2026-11-19 · `shipped` in [#26](https://github.com/aashikahmed/do-it/pull/26)
+
+A day you forgot completely often had no Activity row to hold, so it couldn't be changed. Proposal: https://claude.ai/artifact/L6zjhYmSJJJFfMazhZxeGz. Shipped A + B: the log sheet's Earlier tab and tappable days in your own Progress calendar open the Change a day form; a catch-up card after 3+ empty days in a row (reaching the day before yesterday) asks oldest first, previews all answers together and saves them in one go (`set_days()`). D (Activity rows for empty days) is parked on local branch `activity-empty-days`.
+
+Still open:
+- Break pacts only reach Earlier from today's sheet after 6pm (and Progress any time). Enough?
+- Should D's empty-day rows come back if people still miss days?
+
 ### A fresher look for the chain
 Added 2026-11-19 · `shipped` in [#27](https://github.com/aashikahmed/do-it/pull/27)
 

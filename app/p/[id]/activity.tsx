@@ -294,7 +294,11 @@ function weekDays(b: PactBundle, me: string, row: Extract<ActivityRow, { type: "
 
 // ───────────────────────── change a day ─────────────────────────
 
-function DaySheet({ b, me, row, onClose }: { b: PactBundle; me: string; row: ActivityRow; onClose: () => void }) {
+/**
+ * Change (or fill in) one of your days. In its own sheet, or inside another one (the log sheet's Earlier tab), where
+ * `onBack` returns to the calendar.
+ */
+export function DaySheet({ b, me, row, onClose, onBack }: { b: PactBundle; me: string; row: ActivityRow; onClose: () => void; onBack?: () => void }) {
   const { pact } = b;
   const isBreak = pact.kind === "break";
   const amount = isBreak && pact.measure === "count";
@@ -318,7 +322,7 @@ function DaySheet({ b, me, row, onClose }: { b: PactBundle; me: string; row: Act
   const plain = day !== null && did !== null ? previewDay(inputs, me, day, did, did ? value : null, false) : null;
   const preview = plain && freeze && plain.canFreeze && day !== null && did !== null ? previewDay(inputs, me, day, did, did ? value : null, true) : plain;
   const label = pact.cadence === "weekly" ? "That week" : day ? capital(dayWord(day, b)) : "";
-  const effect = preview && day ? changeText(b.state, preview, me, day, label, pact.cadence === "weekly" ? "week" : "day") : null;
+  const effect = preview && day ? changeText(b.state, preview, me, day, label, pact.cadence === "weekly" ? "week" : "day", pact.kind ?? "build") : null;
   const reactions = existing && did === false ? b.hearts.filter((h) => h.checkin_id === existing.id).length : 0;
   const limit = day ? limitOn(pact, day) : null;
 
@@ -353,9 +357,9 @@ function DaySheet({ b, me, row, onClose }: { b: PactBundle; me: string; row: Act
   const no = isBreak ? "I gave in" : "I missed it";
   const tone = effect?.tone === "good" ? "bg-mint/15" : effect?.tone === "warn" ? "bg-ember/10" : "bg-mist";
 
-  return (
-    <Sheet open onClose={onClose} title={title}>
-      <p className="-mt-3 mb-4 text-[15px] text-ink-3">
+  const body = (
+    <>
+      <p className={`${onBack ? "" : "-mt-3 "}mb-4 text-[15px] text-ink-3`}>
         {amount ? `How many ${pact.unit ?? ""} did you have?${limit !== null ? ` Your limit was ${formatValue(pact, limit)}.` : ""}` : isBreak ? "Did you stay off it?" : pact.title}
       </p>
 
@@ -371,7 +375,7 @@ function DaySheet({ b, me, row, onClose }: { b: PactBundle; me: string; row: Act
                 onClick={() => setDayPicked(d)}
                 className={`h-10 rounded-full px-4 text-[15px] font-bold ${day === d ? "bg-ink text-white" : "bg-mist text-ink-2"}`}
               >
-                {formatDay(d, { weekday: "short", day: "numeric" })}
+                {shortDay(d)}
               </button>
             ))}
           </div>
@@ -439,8 +443,41 @@ function DaySheet({ b, me, row, onClose }: { b: PactBundle; me: string; row: Act
         {busy ? "Saving…" : "Save"}
       </button>
       {!(startDid === null && day === b.yesterday) && <p className="mt-2 mb-2 text-center text-[13px] text-ink-3">Your partners see it as changed.</p>}
+    </>
+  );
+  if (onBack) {
+    return (
+      <div>
+        <div className="mb-2 flex items-center gap-1">
+          <button type="button" onClick={onBack} aria-label="Back to your days" className="-ml-2 flex h-10 w-10 items-center justify-center rounded-full text-ink-2">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden>
+              <path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <h3 className="text-[20px] font-extrabold">{title}</h3>
+        </div>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <Sheet open onClose={onClose} title={title}>
+      {body}
     </Sheet>
   );
+}
+
+/** "Fri 13" (Intl puts the day number first) */
+export function shortDay(d: Day) {
+  return `${formatDay(d, { weekday: "short" })} ${formatDay(d, { day: "numeric" })}`;
+}
+
+/** your row for a day, as Activity would show it, so a calendar can open the same form */
+export function rowForDay(b: PactBundle, me: string, day: Day): ActivityRow {
+  const c = b.checkins.find((x) => x.user_id === me && x.day === day);
+  if (c) return { type: "checkin", key: `c:${c.id}`, user: me, day, checkin: c, change: null };
+  const said = b.misses.some((m) => m.user_id === me && m.day === day);
+  return { type: "miss", key: `d:${day}`, user: me, day, said, cover: null, change: null };
 }
 
 function capital(s: string) {
