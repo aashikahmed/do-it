@@ -48,21 +48,21 @@ Open questions:
 - Later: rotating picks ("this week's ideas"), what's popular in the app, seasonal sets (January, exam season).
 - Could the signed-out landing page show a few as well?
 
-### A fresher look for the chain
-Added 2026-11-19 · `in progress`
-
-The chain felt plain. After five rounds of mockups (https://claude.ai/artifact/E1jpxSHvFCt6XNoAmgmZ19) the owner picked "Your lanes" for build pacts (a running track, a lane per person, animated from the start line to today on every open) and "Calendar and tokens" for break pacts (clean-day tokens that are never taken back, weekly bars against the goal). Branch `lanes-and-tokens`.
-
-Open questions:
-- The hero's big number is still the streak. Should break pacts show clean days there instead, to match the tokens?
-- Other styles from the mockups (night, line, paper, sun) as a per-pact choice?
-- A share image of a finished lap or a full token set.
-
 ## Deferred
 
 Things we decided not to do yet during other work. None yet.
 
 ## Shipped or dropped
+
+### A fresher look for the chain
+Added 2026-11-19 · `shipped` in [#27](https://github.com/aashikahmed/do-it/pull/27)
+
+The chain felt plain. After five rounds of mockups (https://claude.ai/artifact/E1jpxSHvFCt6XNoAmgmZ19) the owner picked "Your lanes" for build pacts (a running track, a lane per person, animated from the start line to today on every open) and "Calendar and tokens" for break pacts (clean-day tokens that are never taken back, weekly bars against the goal).
+
+Still open:
+- The hero's big number is still the streak. Should break pacts show clean days there instead, to match the tokens?
+- Other styles from the mockups (night, line, paper, sun) as a per-pact choice?
+- A share image of a finished lap or a full token set.
 
 ### Log from a sheet instead of the dock
 Added 2026-11-19 · `shipped` in [#21](https://github.com/aashikahmed/do-it/pull/21)
