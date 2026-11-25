@@ -8,7 +8,10 @@ import { notifyCheckin } from "@/lib/notify";
 import { sendPush } from "@/lib/push";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { addDays, isValidTimeZone, todayIn } from "@/lib/dates";
-import { breakModeOf, changesBody } from "@/lib/edit";
+import { breakModeOf, changesBody, draftRules } from "@/lib/edit";
+import { ideaById } from "@/lib/explore/catalog";
+import { nextLevel } from "@/lib/explore/levels";
+import { createSchema, type CreateInput } from "@/lib/pact-input";
 import { breakTitle, firstName, inSentence, listNames, makeUpLabel, subjectOf } from "@/lib/view";
 import { planFreezes } from "@/lib/streak";
 import { deadlineText, pactDeadline, tzFor } from "@/lib/reminders";
@@ -17,6 +20,8 @@ import { dayName, weekEndOn, weeksRun } from "@/lib/week";
 export type ActionResult<T = undefined> = { ok: true; data?: T } | { ok: false; error: string };
 
 const uuid = z.string().uuid();
+/** null is any amount */
+const numberSchema = z.number().positive().max(999999).nullable();
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 function fail(message: string): ActionResult<never> {
@@ -40,6 +45,12 @@ function friendly(msg: string | undefined) {
     "There's nothing to freeze right now",
     "Pact not found",
     "This pact is still going",
+    "This pact has no number to set",
+    "You've checked in, so your number stays for this round",
+    "This pact has no next level",
+    "Pick two to four ideas",
+    "That's plenty of links for today",
+    "That's plenty for today. Thank you",
     "Only yesterday can be made up",
     "Only yesterday can be called a miss",
     "You can answer for today from 6pm",
@@ -102,34 +113,12 @@ export async function syncTimeZone(timezone: string): Promise<ActionResult> {
 
 // ───────────────────────── pacts ─────────────────────────
 
-const createSchema = z.object({
-  title: z.string().trim().min(1, "Name your pact").max(60),
-  emoji: z.string().min(1).max(16),
-  color: z.enum(["blue", "sun", "ember", "mint", "violet", "rose"]),
-  cadence: z.enum(["daily", "weekly"]),
-  timesPerWeek: z.number().int().min(1).max(7),
-  durationDays: z.number().int().min(7).max(365),
-  startDate: day,
-  timezone: z.string().max(64),
-  measure: z.enum(["none", "count", "time", "distance", "weight"]),
-  direction: z.enum(["up", "down"]),
-  unit: z.string().trim().max(24).optional(),
-  target: z.number().positive().max(999999).nullable().optional(),
-  kind: z.enum(["build", "break"]).default("build"),
-  /** break pacts: what's being given up */
-  subject: z.string().trim().max(40).optional(),
-  /** weekday bitmask, bit 0 = Sunday; never every day */
-  restDays: z.number().int().min(0).max(126).optional(),
-  limitStep: z.number().positive().max(999999).nullable().optional(),
-  askNextMorning: z.boolean().optional(),
-  cravingPlan: z.string().trim().max(140).optional(),
-});
-
-export async function createPact(input: z.input<typeof createSchema>): Promise<ActionResult<{ id: string; code: string }>> {
+/** `asked`: the first name of whoever asked for this (an "ask a friend" link), now in it too. */
+export async function createPact(input: CreateInput): Promise<ActionResult<{ id: string; code: string; asked?: string }>> {
   const parsed = createSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Check the details");
   const v = parsed.data;
-  const { supabase } = await requireUser();
+  const { supabase, userId } = await requireUser();
   const tz = isValidTimeZone(v.timezone) ? v.timezone : "UTC";
   const { data: id, error } = await supabase.rpc("create_pact", {
     p_title: v.title,
@@ -150,21 +139,58 @@ export async function createPact(input: z.input<typeof createSchema>): Promise<A
     p_limit_step: v.kind === "break" && v.measure === "count" ? v.limitStep ?? null : null,
     p_ask_next_morning: v.kind === "break" && !!v.askNextMorning,
     p_craving_plan: v.kind === "break" ? v.cravingPlan || null : null,
+    // only an idea that exists, of the same kind
+    p_idea: v.ideaId && v.ideaLevel && ideaById(v.ideaId)?.kind === v.kind ? v.ideaId : null,
+    p_level: v.ideaLevel ?? null,
   });
   if (error || !id) return fail(friendly(error?.message));
   const { data: pact } = await supabase.from("pacts").select("invite_code").eq("id", id).single();
+  let asked: string | undefined;
+  if (v.ask) {
+    // null when someone had already answered: the pact stands on its own
+    const { data: asker } = await supabase.rpc("answer_ask", { p_code: v.ask, p_pact: id });
+    if (asker) {
+      asked = firstName(await displayName(asker as string));
+      after(async () => {
+        const name = firstName(await displayName(userId));
+        await sendPush([asker as string], {
+          title: `${v.emoji} ${name} chose`,
+          // break pacts never name the habit in a notification
+          body: v.kind === "break" ? "You're both in." : `${v.title}. You're both in.`,
+          url: `/p/${id}`,
+          tag: `pact-${id}`,
+        });
+      });
+    }
+  }
   // drops the screens the router kept, so going back to home shows the new pact
   refresh();
-  return { ok: true, data: { id: id as string, code: pact?.invite_code ?? "" } };
+  return { ok: true, data: { id: id as string, code: pact?.invite_code ?? "", asked } };
 }
 
-export async function joinPact(code: string): Promise<ActionResult<{ id: string }>> {
+/** A link with two to four ideas for a friend to choose from. */
+export async function createAsk(ids: string[]): Promise<ActionResult<{ code: string }>> {
+  const parsed = z.array(z.string().max(60)).safeParse(ids);
+  const known = parsed.success ? parsed.data.filter((id) => ideaById(id)) : [];
+  if (known.length < 2 || known.length > 4) return fail("Pick two to four ideas");
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("create_ask", { p_ideas: known });
+  return error || !data ? fail(friendly(error?.message)) : { ok: true, data: { code: data as string } };
+}
+
+/** `number`: your own (build pacts), picked while joining. Undefined keeps the pact's; null is any amount. */
+export async function joinPact(code: string, number?: number | null): Promise<ActionResult<{ id: string }>> {
   const parsed = z.string().trim().min(4).max(32).safeParse(code);
   if (!parsed.success) return fail("This invite link is not valid");
   const { supabase, userId } = await requireUser();
   const { data: before } = await supabase.from("pacts").select("id").eq("invite_code", parsed.data.toLowerCase()).maybeSingle();
   const { data: id, error } = await supabase.rpc("join_pact", { p_code: parsed.data });
   if (error || !id) return fail(friendly(error?.message));
+  if (!before && number !== undefined) {
+    const n = numberSchema.safeParse(number);
+    // they're in either way: a number that can't be saved can still be set from the pact's menu
+    if (n.success) await supabase.rpc("set_my_number", { p_pact: id, p_target: n.data ?? 0 });
+  }
   if (!before) {
     // first time joining — let the others know
     after(async () => {
@@ -299,13 +325,55 @@ export async function editPact(input: z.input<typeof editSchema>): Promise<Actio
   return { ok: true, data: { locked: outcome === "locked" } };
 }
 
-/** "Go again": start the next round of a finished pact with the same settings and everyone still in it. */
-export async function startNextRound(pactId: string): Promise<ActionResult<{ id: string }>> {
+/** Your own number in a build pact, until your first check-in (set_my_number() decides). Null is any amount. */
+export async function setMyNumber(input: { pactId: string; target: number | null }): Promise<ActionResult> {
+  const parsed = z.object({ pactId: uuid, target: numberSchema }).safeParse(input);
+  if (!parsed.success) return fail("Check the number");
+  const { supabase } = await requireUser();
+  const { error } = await supabase.rpc("set_my_number", { p_pact: parsed.data.pactId, p_target: parsed.data.target ?? 0 });
+  if (error) return fail(friendly(error.message));
+  refresh();
+  return { ok: true };
+}
+
+/** Something people should be able to start. Read in admin. */
+export async function suggestIdea(text: string): Promise<ActionResult> {
+  const parsed = z.string().trim().min(3, "Say a little more").max(140, "Keep it under 140 characters").safeParse(text);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Say a little more");
+  const { supabase } = await requireUser();
+  const { error } = await supabase.rpc("suggest_idea", { p_text: parsed.data });
+  return error ? fail(friendly(error.message)) : { ok: true };
+}
+
+/**
+ * "Go again": start the next round of a finished pact with the same settings and everyone still in it. `levelUp` starts
+ * it at the idea's next level instead, worked out here from the pact itself.
+ */
+export async function startNextRound(pactId: string, levelUp = false): Promise<ActionResult<{ id: string }>> {
   if (!uuid.safeParse(pactId).success) return fail("Pact not found");
   const { supabase, userId } = await requireUser();
   const { data: existing } = await supabase.from("pacts").select("id").eq("previous_id", pactId).maybeSingle();
   if (existing) return { ok: true, data: { id: existing.id as string } };
-  const { data: id, error } = await supabase.rpc("start_next_round", { p_prev: pactId });
+  const up = levelUp ? nextLevel(((await supabase.from("pacts").select("*").eq("id", pactId).maybeSingle<Pact>()).data ?? {}) as Pact) : null;
+  if (levelUp && !up) return fail("There's no next level for this one");
+  const r = up && draftRules(up.draft, up.idea.kind, todayIn("UTC"));
+  const { data: id, error } = await (r
+    ? supabase.rpc("start_next_level", {
+        p_prev: pactId,
+        p_level: up.level,
+        p_title: up.idea.kind === "break" ? breakTitle(up.idea.subject, up.draft.mode) : null,
+        p_cadence: r.cadence,
+        p_times_per_week: r.times_per_week,
+        p_duration_days: r.duration_days,
+        p_measure: r.measure,
+        p_direction: r.direction,
+        p_unit: r.unit,
+        p_target: r.target,
+        p_rest_days: r.rest_days,
+        p_limit_step: r.limit_step,
+        p_ask_next_morning: r.ask_next_morning,
+      })
+    : supabase.rpc("start_next_round", { p_prev: pactId }));
   if (error || !id) return fail(friendly(error?.message));
   after(async () => {
     const admin = createAdminClient();
@@ -320,7 +388,7 @@ export async function startNextRound(pactId: string): Promise<ActionResult<{ id:
       (members ?? []).map((m) => m.user_id).filter((u) => u !== userId),
       {
         title: pact.kind === "break" ? `${pact.emoji} Round ${pact.round} is on` : `${pact.emoji} Round ${pact.round} of ${pact.title} is on`,
-        body: `${name.split(" ")[0]} started it. You're in, starting today.${pact.cadence === "weekly" ? ` Weeks run ${weeksRun(pact.start_date)}.` : ""}`,
+        body: `${name.split(" ")[0]} started it${up && pact.kind !== "break" ? `, one level up: ${up.text.charAt(0).toLowerCase()}${up.text.slice(1)}` : ""}. You're in, starting today.${pact.cadence === "weekly" ? ` Weeks run ${weeksRun(pact.start_date)}.` : ""}`,
         url: `/p/${id}`,
         tag: `pact-${id}`,
       },

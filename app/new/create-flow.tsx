@@ -1,22 +1,24 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { createPact } from "@/lib/client-actions";
 import { StraightLanes } from "@/components/lanes";
 import { TokenStrip } from "@/components/tokens";
 import { inkOn, laneColor } from "@/lib/lanes";
 import { buildTokens } from "@/lib/tokens";
-import { ShareInvite } from "@/components/share-invite";
+import { PactCreated } from "@/components/pact-created";
 import { Sheet } from "@/components/sheet";
 import Link from "next/link";
 import { toast } from "@/components/toast";
 import { CadencePicker, Choice, ColorPicker, Field, HowMuchPicker, IconPicker, LengthPicker, LimitStepPicker, RestDaysPicker, StartPicker, SwitchRow, TrackPicker } from "@/components/pact-fields";
 import { addDays, deviceTimeZone, diffDays, todayIn } from "@/lib/dates";
 import type { RuleDraft } from "@/lib/edit";
+import { saveCreateDraft, useCreateDraft, useHeld, type CreateDraft } from "@/lib/explore/handoff";
+import { createInput } from "@/lib/pact-input";
 import { freezesFor } from "@/lib/streak";
-import { breakTitle, cadenceText, inSentence, type BreakMode } from "@/lib/view";
+import { breakTitle, cadenceText, inSentence } from "@/lib/view";
 import { startOffsets } from "@/lib/week";
 import type { PactColor } from "@/lib/data";
 
@@ -32,29 +34,9 @@ type Draft = RuleDraft & {
   cravingPlan: string;
 };
 
-type BreakTemplate = { subject: string; emoji: string; color: PactColor; mode?: BreakMode; allowance?: number; limit?: number; limitUnit: string };
-
-const BREAK_TEMPLATES: BreakTemplate[] = [
-  { subject: "Soda", emoji: "🥤", color: "rose", limitUnit: "cans" },
-  { subject: "Sugar", emoji: "🍬", color: "sun", limitUnit: "treats" },
-  { subject: "Alcohol", emoji: "🍷", color: "violet", limitUnit: "drinks" },
-  { subject: "Smoking", emoji: "🚬", color: "ember", limitUnit: "cigarettes" },
-  { subject: "Junk food", emoji: "🍟", color: "sun", limitUnit: "snacks" },
-  { subject: "Social media", emoji: "📱", color: "blue", mode: "amount", limit: 30, limitUnit: "minutes" },
-  { subject: "Takeout", emoji: "🥡", color: "mint", mode: "days", allowance: 2, limitUnit: "meals" },
-  { subject: "Coffee", emoji: "☕", color: "ember", mode: "amount", limit: 2, limitUnit: "cups" },
-];
-
-const TEMPLATES: (Partial<Draft> & { title: string; emoji: string })[] = [
-  { emoji: "💪", title: "Push-ups", cadence: "daily", measure: "count", unit: "push-ups", target: 20, color: "ember" },
-  { emoji: "🏋️", title: "Hit the gym", cadence: "weekly", timesPerWeek: 3, measure: "none", color: "blue" },
-  { emoji: "📚", title: "Read every day", cadence: "daily", measure: "count", unit: "pages", target: 10, color: "violet" },
-  { emoji: "🧘", title: "Meditate", cadence: "daily", measure: "time", direction: "up", target: 600, color: "mint" },
-  { emoji: "🏃", title: "Go for a run", cadence: "weekly", timesPerWeek: 3, measure: "distance", unit: "km", target: 3, color: "rose" },
-  { emoji: "💻", title: "Deep work", cadence: "daily", measure: "time", direction: "up", target: 3600, color: "blue" },
-  { emoji: "🍬", title: "No sugar", cadence: "daily", measure: "none", color: "sun" },
-  { emoji: "✍️", title: "Write", cadence: "daily", measure: "count", unit: "words", target: 300, color: "violet" },
-];
+/** an idea the create flow points to, instead of a template of its own */
+export type IdeaLink = { slug: string; emoji: string; title: string };
+export type IdeaLinks = { build: IdeaLink[]; break: IdeaLink[]; count: number };
 
 const BUILD_STEPS = ["Kind", "What", "How often", "How long", "Track", "Look"] as const;
 const BREAK_STEPS = ["Kind", "What", "How much", "How long"] as const;
@@ -63,23 +45,35 @@ const BREAK_STEPS = ["Kind", "What", "How much", "How long"] as const;
  * The router keeps this screen alive after you leave it, so without a key "New pact" would come back on the last
  * pact's "Now bring someone in". Every fresh visit starts over; going back to it doesn't.
  */
-export function CreateFlow() {
+export function CreateFlow({ ideas }: { ideas: IdeaLinks }) {
   const { bfcacheId } = useRouter();
-  // "Build a habit in its place" lands here with ?kind=build, already past the first question
-  const preset = useSearchParams().get("kind") === "build" ? "build" : null;
-  return <Flow key={`${bfcacheId}-${preset}`} preset={preset} />;
+  // the query string is the current page's, even while this one is kept out of sight: only follow it while it's shown
+  const live = useSearchParams().toString();
+  const [query, setQuery] = useState(live);
+  if (usePathname() === "/new" && live !== query) setQuery(live);
+  return <Visit key={`${bfcacheId}-${query}`} ideas={ideas} query={query} />;
 }
 
-function Flow({ preset }: { preset: "build" | null }) {
+function Visit({ ideas, query }: { ideas: IdeaLinks; query: string }) {
+  const params = new URLSearchParams(query);
+  // an idea from Explore opened here to change everything, or a search there that found nothing
+  const draft = useHeld(useCreateDraft(params.get("from") === "idea"));
+  const name = params.get("name")?.trim().slice(0, 60) ?? "";
+  // "Build a habit in its place" lands here with ?kind=build, already past the first question
+  const preset = params.get("kind") === "build" || name ? "build" : null;
+  return <Flow key={draft ? "idea" : "new"} ideas={ideas} from={draft} preset={preset} title={name} />;
+}
+
+function Flow({ ideas, from, preset, title }: { ideas: IdeaLinks; from: CreateDraft | null; preset: "build" | null; title: string }) {
   const router = useRouter();
-  const [step, setStep] = useState(preset ? 1 : 0);
+  const [step, setStep] = useState(preset || from ? 1 : 0);
   const [dir, setDir] = useState(1);
   const [busy, setBusy] = useState(false);
-  const [created, setCreated] = useState<{ id: string; code: string } | null>(null);
+  const [created, setCreated] = useState<{ id: string; code: string; asked?: string } | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [d, setD] = useState<Draft>({
+  const [d, setD] = useState<Draft>(() => ({
     kind: preset,
-    title: "",
+    title,
     emoji: "🔥",
     color: "blue",
     cadence: "daily",
@@ -99,7 +93,8 @@ function Flow({ preset }: { preset: "build" | null }) {
     restDays: 0,
     askNextMorning: false,
     cravingPlan: "",
-  });
+    ...(from && { ...from.draft, ...from.look, startOffset: from.offset }),
+  }));
   const set = (patch: Partial<Draft>) => setD((x) => ({ ...x, ...patch }));
 
   const isBreak = d.kind === "break";
@@ -127,108 +122,36 @@ function Flow({ preset }: { preset: "build" | null }) {
   async function submit() {
     setBusy(true);
     const tz = deviceTimeZone();
-    const res = isBreak ? await createBreak(tz) : await createPact({
-      title: d.title.trim(),
-      emoji: d.emoji,
-      color: d.color,
-      cadence: d.cadence,
-      timesPerWeek: d.cadence === "daily" ? 7 : d.timesPerWeek,
-      durationDays: d.durationDays,
-      startDate: addDays(todayIn(tz), startFor(tz, d.startOffset, d.cadence === "weekly")),
-      timezone: tz,
-      measure: d.measure,
-      direction: d.measure === "time" || d.measure === "weight" ? d.direction : "up",
-      unit: d.measure === "none" || d.measure === "time" ? undefined : d.unit.trim() || undefined,
-      target: d.measure !== "none" && d.target ? d.target : null,
-    });
+    const weekly = isBreak ? breakCadence === "weekly" : d.cadence === "weekly";
+    const start = addDays(todayIn(tz), startFor(tz, d.startOffset, weekly));
+    const res = await createPact({ ...createInput(d, { kind: isBreak ? "break" : "build", title: d.title, subject: d.subject, emoji: d.emoji, color: d.color, cravingPlan: d.cravingPlan, idea: from && from.look.kind === d.kind ? from.look.idea : undefined }, start, tz), ask: from?.ask ?? undefined });
     setBusy(false);
     if (!res.ok) return toast(res.error, "error");
+    saveCreateDraft(null);
     setCreated(res.data!);
-  }
-
-  function createBreak(tz: string) {
-    const amount = d.mode === "amount";
-    return createPact({
-      kind: "break",
-      title: breakTitle(d.subject, d.mode),
-      subject: subject,
-      emoji: d.emoji,
-      color: d.color,
-      cadence: breakCadence,
-      timesPerWeek: d.mode === "days" ? 7 - d.allowance : 7,
-      durationDays: d.durationDays,
-      startDate: addDays(todayIn(tz), startFor(tz, d.startOffset, breakCadence === "weekly")),
-      timezone: tz,
-      measure: amount ? "count" : "none",
-      direction: "down",
-      unit: amount ? d.limitUnit.trim() : undefined,
-      target: amount ? d.limit : null,
-      limitStep: amount ? d.limitStep : null,
-      restDays: breakCadence === "daily" ? d.restDays : 0,
-      askNextMorning: d.askNextMorning,
-      cravingPlan: d.cravingPlan.trim() || undefined,
-    });
-  }
-
-  function pickBreak(t: BreakTemplate) {
-    const mode = t.mode ?? "none";
-    set({
-      subject: t.subject,
-      emoji: t.emoji,
-      color: t.color,
-      mode,
-      allowance: t.allowance ?? 3,
-      limit: t.limit ?? 2,
-      limitUnit: t.limitUnit,
-      durationDays: mode === "days" ? 28 : 30,
-    });
-    go(step + 1);
   }
 
   if (created) {
     return (
-      <main data-color={d.color} className="flex min-h-dvh flex-col bg-[var(--pact)] px-6 pt-safe pb-safe text-[var(--pact-ink)]">
-        <motion.div
-          className="flex flex-1 flex-col justify-center"
-          initial={{ y: 30, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 260, damping: 24 }}
-        >
-          <span className="text-[64px]" aria-hidden>
-            {d.emoji}
-          </span>
-          <h1 className="display mt-4 text-[60px] font-extrabold">Now bring someone in.</h1>
-          <p className="mt-5 max-w-[32ch] text-[18px] leading-snug opacity-85">
-            Send the link to your partner, or to the whole group. Once they join, you share one chain.
-          </p>
-        </motion.div>
-        <div className="space-y-3">
-          <ShareInvite
-            code={created.code}
-            // a break pact's title isn't in the draft: it's made from the subject when the pact is created
-            pact={
-              isBreak
-                ? { kind: "break", title: breakTitle(d.subject, d.mode), subject, emoji: d.emoji, cadence: breakCadence, measure: d.mode === "amount" ? "count" : "none" }
-                : { kind: "build", title: d.title, emoji: d.emoji }
-            }
-            label="Send invite link"
-            className="h-16 w-full rounded-[22px] bg-white text-[18px] font-extrabold text-ink"
-          />
-          <button onClick={() => router.replace(`/p/${created.id}`)} className="h-14 w-full rounded-[22px] text-[17px] font-bold opacity-90">
-            Go to the pact
-          </button>
-          {isBreak && (
-            <Link href="/new?kind=build" className="flex h-11 items-center justify-center text-[15px] font-semibold underline-offset-4 opacity-80 hover:underline">
-              Build a habit in its place
-            </Link>
-          )}
-        </div>
-      </main>
+      <PactCreated
+        id={created.id}
+        code={created.code}
+        color={d.color}
+        emoji={d.emoji}
+        asked={created.asked}
+        // a break pact's title isn't in the draft: it's made from the subject when the pact is created
+        pact={
+          isBreak
+            ? { kind: "break", title: breakTitle(d.subject, d.mode), subject, emoji: d.emoji, cadence: breakCadence, measure: d.mode === "amount" ? "count" : "none" }
+            : { kind: "build", title: d.title, emoji: d.emoji }
+        }
+        next={isBreak ? { href: "/new?kind=build", label: "Build a habit in its place" } : undefined}
+      />
     );
   }
 
   return (
-    <main className="flex min-h-dvh flex-col px-5 pt-safe pb-safe">
+    <main data-color={d.color} className="flex min-h-dvh flex-col px-5 pt-safe pb-safe">
       <div className="flex items-center gap-3 pt-3">
         <button
           onClick={() => (step === 0 ? router.back() : go(step - 1))}
@@ -306,15 +229,7 @@ function Flow({ preset }: { preset: "build" | null }) {
                   />
                 </div>
                 <IconPicker kind="break" value={d.emoji} onPick={(emoji) => set({ emoji })} className="-mx-5 mt-3 px-5" />
-                <p className="mt-8 mb-3 text-[15px] font-bold text-ink-2">Or pick one</p>
-                <div className="flex flex-wrap gap-2">
-                  {BREAK_TEMPLATES.map((t) => (
-                    <button key={t.subject} onClick={() => pickBreak(t)} className="flex h-11 items-center gap-2 rounded-full bg-paper px-4 text-[15px] font-semibold active:scale-95">
-                      <span aria-hidden>{t.emoji}</span>
-                      {t.subject}
-                    </button>
-                  ))}
-                </div>
+                <IdeaLinkChips label="Or start from an idea" links={ideas.break} all="/explore/lane/break" />
               </>
             )}
 
@@ -372,22 +287,7 @@ function Flow({ preset }: { preset: "build" | null }) {
                   />
                 </div>
                 <IconPicker kind="build" value={d.emoji} onPick={(emoji) => set({ emoji })} className="-mx-5 mt-3 px-5" />
-                <p className="mt-8 mb-3 text-[15px] font-bold text-ink-2">Or start from one of these</p>
-                <div className="flex flex-wrap gap-2">
-                  {TEMPLATES.map((t) => (
-                    <button
-                      key={t.title}
-                      onClick={() => {
-                        set({ ...t, measure: t.measure ?? "none", direction: t.direction ?? "up", unit: t.unit ?? "", target: t.target ?? null, timesPerWeek: t.timesPerWeek ?? 3, durationDays: t.cadence === "weekly" ? 28 : 30 });
-                        go(step + 1);
-                      }}
-                      className="flex h-11 items-center gap-2 rounded-full bg-paper px-4 text-[15px] font-semibold active:scale-95"
-                    >
-                      <span aria-hidden>{t.emoji}</span>
-                      {t.title}
-                    </button>
-                  ))}
-                </div>
+                <IdeaLinkChips label="Or start from an idea" links={ideas.build} all="/explore" count={ideas.count} />
               </>
             )}
 
@@ -463,6 +363,27 @@ function Flow({ preset }: { preset: "build" | null }) {
       </button>
       )}
     </main>
+  );
+}
+
+/** A few ideas to start from: each opens its page in Explore, with a level to pick. */
+function IdeaLinkChips({ label, links, all, count }: { label: string; links: IdeaLink[]; all: string; count?: number }) {
+  const chip = "flex h-11 items-center gap-2 rounded-full px-4 text-[15px] font-semibold active:scale-95";
+  return (
+    <>
+      <p className="mt-8 mb-3 text-[15px] font-bold text-ink-2">{label}</p>
+      <div className="flex flex-wrap gap-2">
+        {links.map((l) => (
+          <Link key={l.slug} href={`/explore/${l.slug}`} className={`${chip} bg-paper`}>
+            <span aria-hidden>{l.emoji}</span>
+            {l.title}
+          </Link>
+        ))}
+        <Link href={all} className={`${chip} bg-ink text-white`}>
+          {count ? `All ${count} ideas` : "All of them"}
+        </Link>
+      </div>
+    </>
   );
 }
 

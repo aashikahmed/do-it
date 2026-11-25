@@ -7,6 +7,7 @@ import { createAdminClient } from "./supabase/admin";
 import { isAdminEmail } from "./admin-access";
 import { fetchAll, loadBundles, type Member, type PactBundle, type PactColor } from "./data";
 import { addDays, formatDay, todayIn } from "./dates";
+import { ideaById } from "./explore/catalog";
 import { cadenceText, pactName, progressText } from "./view";
 
 /**
@@ -489,5 +490,33 @@ export async function getHealth() {
     },
     handoffs: handoffs.error ? null : { parked: hs.length, confirmed: hs.filter((h) => h.confirmed_at).length },
     taps: taps.error ? null : { n: taps.data.length, people: new Set(taps.data.map((t) => t.user_id)).size },
+  };
+}
+
+// ---------- ideas ----------
+
+/** What people suggested for Explore, newest first, and which ideas pacts have started from. */
+export async function getIdeas() {
+  const me = await requireAdmin();
+  const admin = createAdminClient();
+  const [tz, suggested, started] = await Promise.all([
+    viewerTz(me.userId),
+    admin.from("idea_suggestions").select("id,text,created_at,profile:profiles(id,display_name)").order("created_at", { ascending: false }).limit(200),
+    fetchAll<{ idea_id: string; idea_level: string | null }>(() => admin.from("pacts").select("idea_id,idea_level").not("idea_id", "is", null).order("id")),
+  ]);
+  for (const r of [suggested, started]) if (r.error) throw new Error(r.error.message);
+  const counts = new Map<string, number>();
+  for (const p of started.data ?? []) counts.set(p.idea_id, (counts.get(p.idea_id) ?? 0) + 1);
+  return {
+    tz,
+    now: Date.now(),
+    suggestions: ((suggested.data ?? []) as unknown as { id: string; text: string; created_at: string; profile: { id: string; display_name: string } | null }[]).map((s) => ({
+      id: s.id,
+      text: s.text,
+      at: s.created_at,
+      who: s.profile?.display_name || "Someone",
+      whoId: s.profile?.id ?? null,
+    })),
+    started: [...counts].map(([id, n]) => ({ id, n, title: ideaById(id)?.title ?? id })).sort((a, b) => b.n - a.n),
   };
 }

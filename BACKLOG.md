@@ -38,15 +38,31 @@ Open questions:
 - Can an earned freeze be given to a partner like any other?
 
 ### Explore
-Added 2026-11-19 · `idea`
+Added 2026-11-19, reworked 2026-11-25 · `in progress`
 
-An explore section full of ideas for pacts to start with a friend, both building and breaking habits, mixing creative ones (sketch every day, write 100 words) with self-development ones (read 10 pages, no phone in bed). People browse it now and then, pick one, and lock in with someone.
+Ideas for pacts to start with a friend, to build and to break. People choose a domain they're excited about, find an idea, pick a level with a suggested number, and start. Proposal with a working prototype: https://claude.ai/artifact/HMu8s2PqXymMkWNztN1T5g
+
+Decided:
+- Eight domains as lanes ("Pick a lane") with three picks underneath, search, filter chips. Entry is a button next to New pact. All 115 ideas, in code, checked by a test.
+- The level picker is made of inputs the app already had. A level only fills in the number. Levels: Starting out, Getting regular, Going further.
+- Sources nobody could confirm aren't shown (18 at first: `checked: false` in `lib/explore/ideas.ts`).
+- Seasonal sets and popular ideas are left out for now.
+
+Built: the pages and catalog, your own number, one level up, suggestions (read in admin), a link and image per idea, ask a friend to choose.
 
 Open questions:
-- Where it lives: its own tab, or inside "new pact"? Tapping an idea should prefill the create form (kind, cadence, length, target).
-- Start as a curated list in code (no table), grouped by theme (body, mind, creative, money, people, screens).
-- Later: rotating picks ("this week's ideas"), what's popular in the app, seasonal sets (January, exam season).
-- Could the signed-out landing page show a few as well?
+- Who opens the 18 unchecked sources?
+- A time target of seven hours reads "At least 7:00:00" on the pact. Fine on an input, odd in a sentence.
+- The preview images use the default font: bundling Bricolage Grotesque would need a font file in the repo.
+
+### Slack and coming back
+Added 2026-11-25 · `idea`
+
+Two findings from the Explore research that are about pacts in general. The field trial where "emergency reserves" worked gave about 29% slack (2 skips a week) and people chose when to spend it; ours gives about 10% and spends itself. And the best programme in a 61,000-person gym megastudy rewarded coming back after a miss.
+
+Open questions:
+- Celebrate the first check-in after a miss or a pause?
+- Are freezes too tight, or too automatic to feel worth protecting?
 
 ## Deferred
 

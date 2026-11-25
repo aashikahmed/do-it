@@ -45,6 +45,9 @@ export interface Pact {
   craving_plan: string | null;
   /** what the rules were before each edit, for anyone who joined under them (lib/edit.ts) */
   edits?: PactEdit[];
+  /** the Explore idea it came from, and the level it started at */
+  idea_id?: string | null;
+  idea_level?: string | null;
 }
 
 /** Break pacts open today's question at 6pm (pact time), or not at all when they ask the next morning. */
@@ -64,6 +67,8 @@ export interface Member {
   avatar_url: string | null;
   /** their profile's timezone: their reminders and deadlines are worded on it */
   timezone?: string | null;
+  /** their own number (build pacts): null is the pact's, 0 is any amount. Read it with numberOf(). */
+  target?: number | null;
 }
 
 export interface Checkin {
@@ -156,7 +161,7 @@ export async function loadBundles(supabase: SupabaseClient, pactIds?: string | s
   const scope = (q: any, col: string) => (pactIds === undefined ? q : typeof pactIds === "string" ? q.eq(col, pactIds) : q.in(col, pactIds));
   const [pacts, members, checkins, freezes, nudges, misses, hearts, changes] = await Promise.all([
     scope(supabase.from("pacts").select("*"), "id"),
-    scope(supabase.from("pact_members").select("pact_id,user_id,joined_on,joined_at,left_on,profile:profiles(display_name,avatar_url,timezone)"), "pact_id"),
+    scope(supabase.from("pact_members").select("pact_id,user_id,joined_on,joined_at,left_on,target,profile:profiles(display_name,avatar_url,timezone)"), "pact_id"),
     fetchAll<Checkin>(() =>
       scope(supabase.from("checkins").select("id,pact_id,user_id,day,value,note,feel,made_up,created_at"), "pact_id")
         // newest day first (a late "log yesterday" must not count as the latest), then entry time
@@ -187,6 +192,7 @@ export async function loadBundles(supabase: SupabaseClient, pactIds?: string | s
         name: ((m.profile as { display_name?: string } | null)?.display_name || "Someone").trim(),
         avatar_url: (m.profile as { avatar_url?: string | null } | null)?.avatar_url ?? null,
         timezone: (m.profile as { timezone?: string | null } | null)?.timezone ?? null,
+        target: m.target === null || m.target === undefined ? null : Number(m.target),
       }))
       .sort((a, b) => a.joined_at.localeCompare(b.joined_at));
     const cs = ((checkins.data ?? []) as Checkin[]).filter((c) => c.pact_id === pact.id).map((c) => ({ ...c, value: c.value === null ? null : Number(c.value) }));

@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAdminEmail } from "@/lib/admin-access";
 
-const PUBLIC = [/^\/$/, /^\/signin/, /^\/j\//, /^\/api\/cron/, /^\/auth\//, /^\/api\/auth\//];
+const PUBLIC = [/^\/$/, /^\/signin/, /^\/j\//, /^\/explore(\/|$)/, /^\/ask\//, /^\/api\/cron/, /^\/auth\//, /^\/api\/auth\//];
 
 const NO_STORE = "private, no-cache, no-store, max-age=0, must-revalidate";
 
