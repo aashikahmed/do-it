@@ -18,6 +18,7 @@ const ITEMS = [
     icon: "M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7",
   },
   { seg: "activity", href: "/admin/activity", label: "Activity", icon: "M22 12h-4l-3 9L9 3l-3 9H2" },
+  { seg: "ideas", href: "/admin/ideas", label: "Ideas", icon: "M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z" },
   {
     seg: "health",
     href: "/admin/health",

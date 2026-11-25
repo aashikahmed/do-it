@@ -111,7 +111,7 @@ function Flow({ ideas, from, preset, title }: { ideas: IdeaLinks; from: CreateDr
     const tz = deviceTimeZone();
     const weekly = isBreak ? breakCadence === "weekly" : d.cadence === "weekly";
     const start = addDays(todayIn(tz), startFor(tz, d.startOffset, weekly));
-    const res = await createPact(createInput(d, { kind: isBreak ? "break" : "build", title: d.title, subject: d.subject, emoji: d.emoji, color: d.color, cravingPlan: d.cravingPlan }, start, tz));
+    const res = await createPact(createInput(d, { kind: isBreak ? "break" : "build", title: d.title, subject: d.subject, emoji: d.emoji, color: d.color, cravingPlan: d.cravingPlan, idea: from && from.look.kind === d.kind ? from.look.idea : undefined }, start, tz));
     setBusy(false);
     if (!res.ok) return toast(res.error, "error");
     saveCreateDraft(null);

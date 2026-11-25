@@ -45,7 +45,7 @@ function View({ idea, slug, next, pending }: Props & { pending: Pending | null }
 
   const isBreak = idea.kind === "break";
   const set = (patch: Partial<RuleDraft>) => setDraft((d) => ({ ...d, ...patch }));
-  const look: PactLook = { kind: idea.kind, title: idea.title, subject: isBreak ? idea.subject : "", emoji: idea.emoji, color: idea.color, cravingPlan: plan };
+  const look: PactLook = { kind: idea.kind, title: idea.title, subject: isBreak ? idea.subject : "", emoji: idea.emoji, color: idea.color, cravingPlan: plan, idea: { id: idea.id, level } };
   const weekly = isWeekly(idea, draft);
 
   function pick(l: Level) {

@@ -4,6 +4,7 @@ import { createInput, createSchema } from "../pact-input";
 import { allCards, ideaById, ideaBySlug, publicIdea, slugOf, threeFor } from "./catalog";
 import { anyFilter, chipsFor, NO_FILTERS, passes } from "./filters";
 import { IDEAS } from "./ideas";
+import { nextLevel, numberLevels } from "./levels";
 import { EXPLORE_LANES, laneOf } from "./lanes";
 import { buildIndex, near, parseMinutes, searchIdeas } from "./search";
 import { LEVELS, type Idea } from "./types";
@@ -197,5 +198,29 @@ describe("three for this week", () => {
       expect(three[2].kind).toBe("break");
       expect(three[2].domain).not.toBe("cravings");
     }
+  });
+});
+
+describe("levels on a running pact", () => {
+  const read = { kind: "build" as const, measure: "count" as const, unit: "pages", target: 5, cadence: "daily" as const, times_per_week: 7, direction: "up" as const, idea_id: "read-pages", idea_level: "starting" };
+  it("offers the idea's numbers while the pact still counts the same thing", () => {
+    expect(numberLevels(read).map((l) => l.target)).toEqual([5, 20, 40]);
+    expect(numberLevels({ ...read, unit: "chapters" })).toEqual([]);
+    expect(numberLevels({ ...read, idea_id: null })).toEqual([]);
+    // counts different things at different levels
+    expect(numberLevels({ kind: "build", measure: "time", unit: null, idea_id: "first-pull-up" })).toEqual([]);
+  });
+  it("offers the next level that asks for more", () => {
+    expect(nextLevel(read)!.level).toBe("regular");
+    expect(nextLevel(read)!.text).toBe("At least 20 pages, every day for 30 days");
+    expect(nextLevel({ ...read, target: 25 })!.level).toBe("further");
+    expect(nextLevel({ ...read, target: 60 })).toBeNull();
+    expect(nextLevel({ ...read, idea_level: "further" })).toBeNull();
+    expect(nextLevel({ ...read, idea_id: "gone" })).toBeNull();
+    expect(nextLevel({ ...read, idea_level: null })).toBeNull();
+  });
+  it("tightens a break pact", () => {
+    const b = nextLevel({ kind: "break", measure: "count", unit: "minutes", target: 60, cadence: "daily", times_per_week: 7, direction: "down", idea_id: "social-media", idea_level: "starting" })!;
+    expect(b.text).toBe("Up to 30 minutes a day, for 21 days");
   });
 });

@@ -48,10 +48,9 @@ Decided:
 - Sources nobody could confirm aren't shown (18 at first: `checked: false` in `lib/explore/ideas.ts`).
 - Seasonal sets and popular ideas are left out for now.
 
-Next, in this order:
-- Same days, your own number. A build pact's target isn't enforced by `lib/streak.ts`, so it needs a nullable target on `pact_members`, not an engine change. Break pacts keep one limit. Until then the idea page says "set it for whoever finds it hardest". Mind that Edit a pact locks the minimum with the rest.
-- "Go again" offers one level up (needs the idea and level on `pacts`, and `start_next_round()` taking new numbers).
-- Suggest an idea: a box in the app, read in admin.
+Built: the pages and catalog, your own number, one level up, suggestions (read in admin).
+
+Next:
 - A link and image per idea (break ideas get a plain image), and ask a friend to choose.
 
 Open questions:

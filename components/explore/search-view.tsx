@@ -10,6 +10,7 @@ import type { IdeaCard } from "@/lib/explore/types";
 import { BackButton } from "./back-button";
 import { FilterChips, IdeaCount } from "./filter-chips";
 import { IdeaRows } from "./idea-row";
+import { Suggest } from "./suggest";
 
 const TRY = ["I'm always tired", "less phone", "5 minutes", "with my mum", "stronger", "anxious", "something creative", "save money"];
 const SHOWN = 30;
@@ -76,6 +77,7 @@ function View({ cards }: { cards: IdeaCard[] }) {
           <Link href="/explore" className="mt-2 flex h-12 items-center justify-center text-[15px] font-bold text-blue">
             Look through the lanes
           </Link>
+          <Suggest key={query} text={query} />
         </div>
       ) : (
         <>

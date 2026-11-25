@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { Search } from "lucide-react";
 import { BackButton } from "@/components/explore/back-button";
 import { IdeaList } from "@/components/explore/idea-list";
+import { Suggest } from "@/components/explore/suggest";
 import { allCards } from "@/lib/explore/catalog";
 import { EXPLORE_LANES } from "@/lib/explore/lanes";
 
@@ -47,6 +48,7 @@ async function Lane({ params }: { params: PageProps<"/explore/lane/[lane]">["par
       </header>
       <div className="px-5 pb-8">
         <IdeaList key={lane.id} cards={allCards().filter((c) => lane.domains.includes(c.domain))} domains={lane.domains} />
+        <Suggest />
       </div>
     </main>
   );
