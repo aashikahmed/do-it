@@ -9,6 +9,7 @@ import { sendPush } from "@/lib/push";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { addDays, isValidTimeZone, todayIn } from "@/lib/dates";
 import { breakModeOf, changesBody } from "@/lib/edit";
+import { createSchema, type CreateInput } from "@/lib/pact-input";
 import { breakTitle, firstName, inSentence, listNames, makeUpLabel, subjectOf } from "@/lib/view";
 import { planFreezes } from "@/lib/streak";
 import { deadlineText, pactDeadline, tzFor } from "@/lib/reminders";
@@ -102,30 +103,7 @@ export async function syncTimeZone(timezone: string): Promise<ActionResult> {
 
 // ───────────────────────── pacts ─────────────────────────
 
-const createSchema = z.object({
-  title: z.string().trim().min(1, "Name your pact").max(60),
-  emoji: z.string().min(1).max(16),
-  color: z.enum(["blue", "sun", "ember", "mint", "violet", "rose"]),
-  cadence: z.enum(["daily", "weekly"]),
-  timesPerWeek: z.number().int().min(1).max(7),
-  durationDays: z.number().int().min(7).max(365),
-  startDate: day,
-  timezone: z.string().max(64),
-  measure: z.enum(["none", "count", "time", "distance", "weight"]),
-  direction: z.enum(["up", "down"]),
-  unit: z.string().trim().max(24).optional(),
-  target: z.number().positive().max(999999).nullable().optional(),
-  kind: z.enum(["build", "break"]).default("build"),
-  /** break pacts: what's being given up */
-  subject: z.string().trim().max(40).optional(),
-  /** weekday bitmask, bit 0 = Sunday; never every day */
-  restDays: z.number().int().min(0).max(126).optional(),
-  limitStep: z.number().positive().max(999999).nullable().optional(),
-  askNextMorning: z.boolean().optional(),
-  cravingPlan: z.string().trim().max(140).optional(),
-});
-
-export async function createPact(input: z.input<typeof createSchema>): Promise<ActionResult<{ id: string; code: string }>> {
+export async function createPact(input: CreateInput): Promise<ActionResult<{ id: string; code: string }>> {
   const parsed = createSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Check the details");
   const v = parsed.data;
