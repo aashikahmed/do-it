@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
+import { Fresh } from "@/components/fresh";
 import { IdeaRow } from "@/components/explore/idea-row";
 import { optionalUser } from "@/lib/data";
 import { cardOf, ideaById } from "@/lib/explore/catalog";
@@ -18,7 +19,7 @@ export default function Page({ params }: PageProps<"/ask/[code]">) {
 
 async function Choose({ params }: { params: PageProps<"/ask/[code]">["params"] }) {
   const { code } = await params;
-  const { supabase } = await optionalUser();
+  const { supabase, at } = await optionalUser();
   const { data } = await supabase.rpc("ask_preview", { p_code: code });
   const ask = data as Ask | null;
   // an idea can leave the catalog after a link was sent
@@ -42,6 +43,7 @@ async function Choose({ params }: { params: PageProps<"/ask/[code]">["params"] }
 
   return (
     <main className="flex min-h-dvh flex-col bg-blue px-5 pt-safe pb-safe text-white">
+      <Fresh stamp={at} />
       <p className="pt-4 text-[20px] font-extrabold tracking-tight">Do it.</p>
       <div className="flex flex-1 flex-col justify-center py-8">
         <h1 className="display text-[56px] font-extrabold break-words">{title}</h1>

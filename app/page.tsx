@@ -7,6 +7,7 @@ import { formatDay, todayIn } from "@/lib/dates";
 import { Avatar } from "@/components/avatar";
 import { PactCard } from "@/components/pact-card";
 import { PushCard } from "@/components/push";
+import { Fresh } from "@/components/fresh";
 import { Live } from "@/components/live";
 import { TimeZoneSync } from "@/components/time-zone";
 import { LandingChain } from "@/components/landing-chain";
@@ -21,9 +22,13 @@ export default function Page() {
 }
 
 async function Root() {
-  const { userId } = await optionalUser();
-  if (!userId) return <Landing />;
-  return <Home />;
+  const { userId, at } = await optionalUser();
+  return (
+    <>
+      <Fresh stamp={at} />
+      {userId ? <Home /> : <Landing />}
+    </>
+  );
 }
 
 function Landing() {
@@ -77,7 +82,7 @@ async function Home() {
 
   return (
     <main className="min-h-dvh px-4 pt-safe pb-4">
-      <Live pactIds={bundles.map((b) => b.pact.id)} days={bundles.map((b) => ({ tz: b.pact.timezone, today: b.today }))} />
+      <Live pactIds={bundles.map((b) => b.pact.id)} days={bundles.map((b) => ({ tz: b.pact.timezone, today: b.today }))} me={me.id} />
       <TimeZoneSync saved={me.timezone} />
       <header className="flex items-center justify-between px-1 pt-3 pb-5">
         <div>

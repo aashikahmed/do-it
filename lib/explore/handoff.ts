@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import type { RuleDraft } from "../edit";
 import type { PactLook } from "../pact-input";
 import type { Level } from "./types";
@@ -31,6 +31,17 @@ function parse<T>(raw: string | null): T | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * What was handed over, for as long as this visit lasts. Creating the pact clears it from storage and refreshes the
+ * screen: without this the screen would start over instead of showing "Now bring someone in".
+ */
+export function useHeld<T>(now: T | null) {
+  const [held, setHeld] = useState(now);
+  // null on the server and while hydrating, so it can arrive a moment later
+  if (now !== null && held === null) setHeld(now);
+  return held ?? now;
 }
 
 export interface Pending {

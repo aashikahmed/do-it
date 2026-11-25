@@ -14,7 +14,7 @@ import { toast } from "@/components/toast";
 import { createPact } from "@/lib/client-actions";
 import { addDays, deviceTimeZone, todayIn } from "@/lib/dates";
 import type { RuleDraft } from "@/lib/edit";
-import { savePending, saveCreateDraft, useAskCode, usePending, type Pending } from "@/lib/explore/handoff";
+import { savePending, saveCreateDraft, useAskCode, useHeld, usePending, type Pending } from "@/lib/explore/handoff";
 import { toggleSaved, useSaved } from "@/lib/explore/saved";
 import type { Idea, IdeaCard, Level } from "@/lib/explore/types";
 import { isWeekly, levelDraft, pactTitle, startText } from "@/lib/explore/words";
@@ -29,8 +29,12 @@ type Props = { idea: Idea; slug: string; next: IdeaCard[] };
 export function IdeaView(props: Props) {
   // a new visit starts at the suggestion; going back to it keeps what was set. Back from signing in, pick up where they were.
   const { bfcacheId } = useRouter();
-  const pending = usePending(props.idea.id);
-  return <View key={`${bfcacheId}|${pending ? "pending" : ""}`} {...props} pending={pending} />;
+  return <Visit key={bfcacheId} {...props} />;
+}
+
+function Visit(props: Props) {
+  const pending = useHeld(usePending(props.idea.id));
+  return <View key={pending ? "pending" : "new"} {...props} pending={pending} />;
 }
 
 function View({ idea, slug, next, pending }: Props & { pending: Pending | null }) {

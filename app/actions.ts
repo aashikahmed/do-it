@@ -163,6 +163,8 @@ export async function createPact(input: CreateInput): Promise<ActionResult<{ id:
       });
     }
   }
+  // drops the screens the router kept, so going back to home shows the new pact
+  refresh();
   return { ok: true, data: { id: id as string, code: pact?.invite_code ?? "", asked } };
 }
 

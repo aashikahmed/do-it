@@ -6,6 +6,7 @@ import { todayIn, diffDays } from "@/lib/dates";
 import { targetText, type Direction, type Measure } from "@/lib/measure";
 import { numberLevels } from "@/lib/explore/levels";
 import { hasNumber } from "@/lib/own-number";
+import { Fresh } from "@/components/fresh";
 import { JoinForm } from "./join-form";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -45,7 +46,7 @@ export default function Page({ params }: PageProps<"/j/[code]">) {
 
 async function Invite({ params }: { params: PageProps<"/j/[code]">["params"] }) {
   const { code } = await params;
-  const { supabase, userId } = await optionalUser();
+  const { supabase, userId, at } = await optionalUser();
   const { data } = await supabase.rpc("invite_preview", { p_code: code });
   const p = data as Preview | null;
 
@@ -70,6 +71,7 @@ async function Invite({ params }: { params: PageProps<"/j/[code]">["params"] }) 
 
   return (
     <main data-color={p.color} className="flex min-h-dvh flex-col bg-[var(--pact)] px-6 pt-safe pb-safe text-[var(--pact-ink)]">
+      <Fresh stamp={at} />
       <p className="pt-4 text-[20px] font-extrabold tracking-tight">Do it.</p>
       <div className="flex flex-1 flex-col justify-center py-8">
         <span className="text-[72px] leading-none" aria-hidden>

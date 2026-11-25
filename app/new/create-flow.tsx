@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { createPact } from "@/lib/client-actions";
 import { StraightLanes } from "@/components/lanes";
@@ -15,7 +15,7 @@ import { toast } from "@/components/toast";
 import { CadencePicker, Choice, ColorPicker, Field, HowMuchPicker, IconPicker, LengthPicker, LimitStepPicker, RestDaysPicker, StartPicker, SwitchRow, TrackPicker } from "@/components/pact-fields";
 import { addDays, deviceTimeZone, diffDays, todayIn } from "@/lib/dates";
 import type { RuleDraft } from "@/lib/edit";
-import { saveCreateDraft, useCreateDraft, type CreateDraft } from "@/lib/explore/handoff";
+import { saveCreateDraft, useCreateDraft, useHeld, type CreateDraft } from "@/lib/explore/handoff";
 import { createInput } from "@/lib/pact-input";
 import { freezesFor } from "@/lib/streak";
 import { breakTitle, cadenceText, inSentence } from "@/lib/view";
@@ -41,10 +41,23 @@ export type IdeaLinks = { build: IdeaLink[]; break: IdeaLink[]; count: number };
 const BUILD_STEPS = ["Kind", "What", "How often", "How long", "Track", "Look"] as const;
 const BREAK_STEPS = ["Kind", "What", "How much", "How long"] as const;
 
+/**
+ * The router keeps this screen alive after you leave it, so without a key "New pact" would come back on the last
+ * pact's "Now bring someone in". Every fresh visit starts over; going back to it doesn't.
+ */
 export function CreateFlow({ ideas }: { ideas: IdeaLinks }) {
-  const params = useSearchParams();
+  const { bfcacheId } = useRouter();
+  // the query string is the current page's, even while this one is kept out of sight: only follow it while it's shown
+  const live = useSearchParams().toString();
+  const [query, setQuery] = useState(live);
+  if (usePathname() === "/new" && live !== query) setQuery(live);
+  return <Visit key={`${bfcacheId}-${query}`} ideas={ideas} query={query} />;
+}
+
+function Visit({ ideas, query }: { ideas: IdeaLinks; query: string }) {
+  const params = new URLSearchParams(query);
   // an idea from Explore opened here to change everything, or a search there that found nothing
-  const draft = useCreateDraft(params.get("from") === "idea");
+  const draft = useHeld(useCreateDraft(params.get("from") === "idea"));
   const name = params.get("name")?.trim().slice(0, 60) ?? "";
   // "Build a habit in its place" lands here with ?kind=build, already past the first question
   const preset = params.get("kind") === "build" || name ? "build" : null;

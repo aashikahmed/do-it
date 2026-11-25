@@ -179,10 +179,10 @@ export function InstallSheet({ open, onClose }: { open: boolean; onClose: () => 
       ) : p.ios ? (
         <ol className="space-y-4 text-[16px]">
           <Step n={1}>
-            Open this page in <b>Safari</b>, then tap <b>Share</b> <ShareIcon /> in the toolbar.
+            Open this page in <b>Safari</b> and tap <b>Share</b> <ShareIcon />. If you don&apos;t see it, tap <b>⋯</b> first.
           </Step>
           <Step n={2}>
-            Scroll down and tap <b>Add to Home Screen</b>.
+            Tap <b>Add to Home Screen</b>. It may be further down, or under <b>More</b>.
           </Step>
           <Step n={3}>
             Open <b>Do it.</b> from your Home Screen and turn on alerts.

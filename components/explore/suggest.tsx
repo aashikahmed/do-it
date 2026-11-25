@@ -32,6 +32,7 @@ function Form({ text, onDone }: { text: string; onDone: () => void }) {
     setBusy(true);
     const { data } = await getBrowserClient().auth.getSession();
     if (!data.session) {
+      setBusy(false);
       router.push(`/signin?next=${encodeURIComponent(window.location.pathname)}`);
       return;
     }

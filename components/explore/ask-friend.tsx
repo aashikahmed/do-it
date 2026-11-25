@@ -21,6 +21,7 @@ export function AskFriend({ ids }: { ids: string[] }) {
     if (!code) {
       const { data } = await getBrowserClient().auth.getSession();
       if (!data.session) {
+        setBusy(false);
         router.push("/signin?next=%2Fexplore%2Fsaved");
         return;
       }

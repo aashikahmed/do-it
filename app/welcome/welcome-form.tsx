@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { saveProfile } from "@/lib/client-actions";
 import { deviceTimeZone } from "@/lib/dates";
 
@@ -9,6 +9,8 @@ export function WelcomeForm({ next }: { next: string }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  // this screen is kept after you leave it: don't come back to "Saving…"
+  useLayoutEffect(() => () => setBusy(false), []);
   const [error, setError] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {

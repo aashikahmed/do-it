@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { NumberPicker } from "@/components/number-picker";
 import { joinPact } from "@/lib/client-actions";
 import { toast } from "@/components/toast";
@@ -12,7 +12,11 @@ import type { Tracking } from "@/lib/measure";
 export function JoinForm({ code, signedIn, number }: { code: string; signedIn: boolean; number: { t: Tracking; levels: NumberLevel[] } | null }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [value, setValue] = useState(number?.t.target ?? null);
+  // undefined until they pick one: left alone, it follows the pact's number, also when a refresh brings a new one
+  const [picked, setPicked] = useState<number | null>();
+  const value = picked === undefined ? (number?.t.target ?? null) : picked;
+  // this screen is kept after you leave it: don't come back to "Joining…"
+  useLayoutEffect(() => () => setBusy(false), []);
 
   async function join() {
     if (!signedIn) {
@@ -29,6 +33,8 @@ export function JoinForm({ code, signedIn, number }: { code: string; signedIn: b
     }
     navigator.vibrate?.(18);
     router.replace(`/p/${res.data!.id}`);
+    // home may be kept from before, without this pact
+    router.refresh();
   }
 
   return (
@@ -37,7 +43,7 @@ export function JoinForm({ code, signedIn, number }: { code: string; signedIn: b
         (signedIn ? (
           <div className="-mx-2 rounded-[22px] bg-paper p-3 text-ink">
             <p className="mx-1 mb-3 text-[17px] font-extrabold">Your number</p>
-            <NumberPicker t={number.t} levels={number.levels} value={value} onChange={setValue} />
+            <NumberPicker t={number.t} levels={number.levels} value={value} onChange={setPicked} />
           </div>
         ) : (
           <p className="text-center text-[15px] font-semibold opacity-90">The days are shared. You pick your own number when you join.</p>

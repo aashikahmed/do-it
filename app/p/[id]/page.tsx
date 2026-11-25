@@ -1,29 +1,31 @@
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 import { getPact } from "@/lib/data";
+import { Fresh } from "@/components/fresh";
 import { TimeZoneSync } from "@/components/time-zone";
 import { nextLevel, numberLevels } from "@/lib/explore/levels";
-import { PactView } from "./pact-view";
+import { PactScreen } from "./pact-screen";
 
 export default function Page({ params }: PageProps<"/p/[id]">) {
   return (
     <Suspense fallback={<PactSkeleton />}>
-      <PactScreen params={params} />
+      <Pact params={params} />
     </Suspense>
   );
 }
 
-async function PactScreen({ params }: { params: PageProps<"/p/[id]">["params"] }) {
+async function Pact({ params }: { params: PageProps<"/p/[id]">["params"] }) {
   const { id } = await params;
-  const { me, bundle, series } = await getPact(id);
+  const { me, bundle, series, at } = await getPact(id);
   if (!me.name) redirect(`/welcome?next=/p/${id}`);
   if (!bundle) notFound();
   // one level up, for the finish screen
   const up = bundle.state.phase === "ended" ? nextLevel(bundle.pact) : null;
   return (
     <>
+      <Fresh stamp={at} />
       <TimeZoneSync saved={me.timezone} />
-      <PactView key={bundle.pact.id} b={bundle} me={me} series={series} levels={numberLevels(bundle.pact)} up={up && { name: up.name, text: up.text, weekly: up.weekly }} />
+      <PactScreen b={bundle} me={me} series={series} levels={numberLevels(bundle.pact)} up={up && { name: up.name, text: up.text, weekly: up.weekly }} />
     </>
   );
 }
