@@ -12,42 +12,23 @@ import { ShareInvite } from "@/components/share-invite";
 import { Sheet } from "@/components/sheet";
 import Link from "next/link";
 import { toast } from "@/components/toast";
-import { ValueInput } from "@/components/measure-input";
-import { MEASURES, type Direction, type Measure, type Tracking } from "@/lib/measure";
-import { addDays, deviceTimeZone, todayIn } from "@/lib/dates";
+import { CadencePicker, Choice, ColorPicker, Field, HowMuchPicker, IconPicker, LengthPicker, LimitStepPicker, RestDaysPicker, StartPicker, SwitchRow, TrackPicker } from "@/components/pact-fields";
+import { addDays, deviceTimeZone, diffDays, todayIn } from "@/lib/dates";
+import type { RuleDraft } from "@/lib/edit";
 import { freezesFor } from "@/lib/streak";
-import { breakTitle, cadenceText, inSentence, restDaysText, type BreakMode } from "@/lib/view";
-import { startOffsets, weeksRun } from "@/lib/week";
+import { breakTitle, cadenceText, inSentence, type BreakMode } from "@/lib/view";
+import { startOffsets } from "@/lib/week";
 import type { PactColor } from "@/lib/data";
 
-type Draft = {
+type Draft = RuleDraft & {
   kind: "build" | "break" | null;
   title: string;
   emoji: string;
   color: PactColor;
-  cadence: "daily" | "weekly";
-  timesPerWeek: number;
-  durationDays: number;
   /** days from today: 0, 1, or the next Monday for weekly pacts */
   startOffset: number;
-  measure: Measure;
-  direction: Direction;
-  unit: string;
-  /** minimum per check-in in the measure's unit (seconds for time) */
-  target: number | null;
-  // break a habit
+  /** break a habit: what's being given up */
   subject: string;
-  mode: BreakMode;
-  /** "some days a week": how many days it's OK */
-  allowance: number;
-  /** "a little each day": the most per day, and what's counted */
-  limit: number;
-  limitUnit: string;
-  /** lower the limit each week by this much (null = off) */
-  limitStep: number | null;
-  /** weekday bitmask, bit 0 = Sunday */
-  restDays: number;
-  askNextMorning: boolean;
   cravingPlan: string;
 };
 
@@ -64,18 +45,6 @@ const BREAK_TEMPLATES: BreakTemplate[] = [
   { subject: "Coffee", emoji: "☕", color: "ember", mode: "amount", limit: 2, limitUnit: "cups" },
 ];
 
-const BREAK_EMOJIS = ["✋", "🥤", "🍬", "🍷", "🍺", "🚬", "🍟", "🍫", "📱", "🎮", "🥡", "☕", "🛒", "💸", "🌙", "🚫"];
-/** Monday first, as bits of the weekday mask (0 = Sunday) */
-const WEEK = [
-  { bit: 1, label: "M", name: "Mondays" },
-  { bit: 2, label: "T", name: "Tuesdays" },
-  { bit: 3, label: "W", name: "Wednesdays" },
-  { bit: 4, label: "T", name: "Thursdays" },
-  { bit: 5, label: "F", name: "Fridays" },
-  { bit: 6, label: "S", name: "Saturdays" },
-  { bit: 0, label: "S", name: "Sundays" },
-];
-
 const TEMPLATES: (Partial<Draft> & { title: string; emoji: string })[] = [
   { emoji: "💪", title: "Push-ups", cadence: "daily", measure: "count", unit: "push-ups", target: 20, color: "ember" },
   { emoji: "🏋️", title: "Hit the gym", cadence: "weekly", timesPerWeek: 3, measure: "none", color: "blue" },
@@ -86,11 +55,6 @@ const TEMPLATES: (Partial<Draft> & { title: string; emoji: string })[] = [
   { emoji: "🍬", title: "No sugar", cadence: "daily", measure: "none", color: "sun" },
   { emoji: "✍️", title: "Write", cadence: "daily", measure: "count", unit: "words", target: 300, color: "violet" },
 ];
-
-const EMOJIS = ["🔥", "💪", "🏋️", "🏃", "📚", "🧘", "💻", "✍️", "💧", "🥗", "🍬", "🌅", "🎸", "🧠", "🚶", "🙏"];
-const COLORS: PactColor[] = ["blue", "ember", "sun", "mint", "violet", "rose"];
-const DAILY_LENGTHS = [7, 14, 21, 30, 60, 90];
-const WEEKLY_LENGTHS = [4, 8, 12];
 
 const BUILD_STEPS = ["Kind", "What", "How often", "How long", "Track", "Look"] as const;
 const BREAK_STEPS = ["Kind", "What", "How much", "How long"] as const;
@@ -136,7 +100,6 @@ export function CreateFlow() {
   const breakCadence = d.mode === "days" ? "weekly" : "daily";
   const subject = inSentence(d.subject);
 
-  const tracking: Tracking = { measure: d.measure, direction: d.direction, unit: d.unit.trim() || null, target: d.target };
   const canNext =
     name === "Kind"
       ? d.kind !== null
@@ -212,18 +175,6 @@ export function CreateFlow() {
       durationDays: mode === "days" ? 28 : 30,
     });
     go(step + 1);
-  }
-
-  function setMode(mode: BreakMode) {
-    const weekly = mode === "days";
-    set({
-      mode,
-      durationDays: weekly
-        ? WEEKLY_LENGTHS.map((w) => w * 7).includes(d.durationDays) ? d.durationDays : 28
-        : DAILY_LENGTHS.includes(d.durationDays) ? d.durationDays : 30,
-      restDays: weekly ? 0 : d.restDays,
-      limitStep: mode === "amount" ? d.limitStep : null,
-    });
   }
 
   if (created) {
@@ -346,19 +297,7 @@ export function CreateFlow() {
                     onKeyDown={(e) => e.key === "Enter" && canNext && go(step + 1)}
                   />
                 </div>
-                <div className="no-scrollbar -mx-5 mt-3 flex gap-1 overflow-x-auto px-5" role="radiogroup" aria-label="Icon">
-                  {BREAK_EMOJIS.map((e) => (
-                    <button
-                      key={e}
-                      role="radio"
-                      aria-checked={d.emoji === e}
-                      onClick={() => set({ emoji: e })}
-                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[22px] ${d.emoji === e ? "bg-ink/10" : ""}`}
-                    >
-                      {e}
-                    </button>
-                  ))}
-                </div>
+                <IconPicker kind="break" value={d.emoji} onPick={(emoji) => set({ emoji })} className="-mx-5 mt-3 px-5" />
                 <p className="mt-8 mb-3 text-[15px] font-bold text-ink-2">Or pick one</p>
                 <div className="flex flex-wrap gap-2">
                   {BREAK_TEMPLATES.map((t) => (
@@ -374,76 +313,20 @@ export function CreateFlow() {
             {name === "How much" && (
               <>
                 <h1 className="display text-[48px] font-extrabold">How much {subject} is OK?</h1>
-                <div className="mt-8 space-y-3" role="radiogroup" aria-label="How much is OK">
-                  <Choice selected={d.mode === "none"} onClick={() => setMode("none")} title="None at all" body="Stay off it every day." />
-                  <Choice selected={d.mode === "days"} onClick={() => setMode("days")} title="Some days a week" body="Have it on a few days, stay off it the rest." />
-                  <Choice selected={d.mode === "amount"} onClick={() => setMode("amount")} title="A little each day" body="Stay under a daily limit." />
+                <div className="mt-8">
+                  <HowMuchPicker d={d} set={set} />
                 </div>
-                {d.mode === "days" && (
-                  <div className="mt-4 flex items-center justify-between rounded-[22px] bg-paper p-4">
-                    <span className="text-[17px] font-bold">Days a week it&apos;s OK</span>
-                    <div className="flex items-center gap-4">
-                      <Stepper label="Fewer" onClick={() => set({ allowance: Math.max(1, d.allowance - 1) })} disabled={d.allowance <= 1}>
-                        −
-                      </Stepper>
-                      <span className="display tnum w-8 text-center text-[36px] font-extrabold" aria-live="polite">
-                        {d.allowance}
-                      </span>
-                      <Stepper label="More" onClick={() => set({ allowance: Math.min(6, d.allowance + 1) })} disabled={d.allowance >= 6}>
-                        +
-                      </Stepper>
-                    </div>
-                  </div>
-                )}
-                {d.mode === "amount" && (
-                  <div className="mt-4 space-y-4 rounded-[22px] bg-paper p-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[17px] font-bold">Up to, each day</span>
-                      <div className="flex items-center gap-4">
-                        <Stepper label="Less" onClick={() => set({ limit: Math.max(1, d.limit - 1) })} disabled={d.limit <= 1}>
-                          −
-                        </Stepper>
-                        <span className="display tnum min-w-8 text-center text-[36px] font-extrabold" aria-live="polite">
-                          {d.limit}
-                        </span>
-                        <Stepper label="More" onClick={() => set({ limit: Math.min(999, d.limit + 1) })}>
-                          +
-                        </Stepper>
-                      </div>
-                    </div>
-                    <Field label="Counted in">
-                      <input
-                        maxLength={24}
-                        value={d.limitUnit}
-                        onChange={(e) => set({ limitUnit: e.target.value })}
-                        placeholder="cans, cups, cigarettes, minutes"
-                        className="h-14 w-full rounded-2xl bg-mist px-4 text-[18px] font-semibold outline-none focus:ring-2 focus:ring-blue"
-                      />
-                    </Field>
-                  </div>
-                )}
               </>
             )}
 
             {name === "How long" && isBreak && (
               <>
                 <h1 className="display text-[48px] font-extrabold">For how long?</h1>
-                <div className="mt-8 grid grid-cols-3 gap-2" role="radiogroup" aria-label="Length">
-                  {(breakCadence === "daily" ? DAILY_LENGTHS : WEEKLY_LENGTHS.map((w) => w * 7)).map((n) => (
-                    <button
-                      key={n}
-                      role="radio"
-                      aria-checked={d.durationDays === n}
-                      onClick={() => set({ durationDays: n })}
-                      className={`h-[84px] rounded-[22px] text-left transition-colors ${d.durationDays === n ? "bg-blue text-white" : "bg-paper"}`}
-                    >
-                      <span className="display tnum block px-4 text-[36px] font-extrabold">{breakCadence === "daily" ? n : n / 7}</span>
-                      <span className="block px-4 text-[14px] font-semibold opacity-75">{breakCadence === "daily" ? "days" : "weeks"}</span>
-                    </button>
-                  ))}
+                <div className="mt-8">
+                  <LengthPicker weekly={breakCadence === "weekly"} value={d.durationDays} onPick={(n) => set({ durationDays: n })} />
                 </div>
                 <div className="mt-4">
-                  <StartPicker offset={d.startOffset} weekly={breakCadence === "weekly"} prefix="Start " onPick={(o) => set({ startOffset: o })} />
+                  <StartOn offset={d.startOffset} weekly={breakCadence === "weekly"} prefix="Start " onPick={(o) => set({ startOffset: o })} />
                 </div>
                 <div className="mt-5 rounded-[22px] bg-[#e3e6ff] p-4 text-[16px] leading-snug">
                   <p>
@@ -480,19 +363,7 @@ export function CreateFlow() {
                     onKeyDown={(e) => e.key === "Enter" && canNext && go(step + 1)}
                   />
                 </div>
-                <div className="no-scrollbar -mx-5 mt-3 flex gap-1 overflow-x-auto px-5" role="radiogroup" aria-label="Icon">
-                  {EMOJIS.map((e) => (
-                    <button
-                      key={e}
-                      role="radio"
-                      aria-checked={d.emoji === e}
-                      onClick={() => set({ emoji: e })}
-                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[22px] ${d.emoji === e ? "bg-ink/10" : ""}`}
-                    >
-                      {e}
-                    </button>
-                  ))}
-                </div>
+                <IconPicker kind="build" value={d.emoji} onPick={(emoji) => set({ emoji })} className="-mx-5 mt-3 px-5" />
                 <p className="mt-8 mb-3 text-[15px] font-bold text-ink-2">Or start from one of these</p>
                 <div className="flex flex-wrap gap-2">
                   {TEMPLATES.map((t) => (
@@ -515,58 +386,20 @@ export function CreateFlow() {
             {name === "How often" && (
               <>
                 <h1 className="display text-[48px] font-extrabold">How often?</h1>
-                <div className="mt-8 space-y-3" role="radiogroup" aria-label="How often">
-                  <Choice
-                    selected={d.cadence === "daily"}
-                    onClick={() => set({ cadence: "daily", durationDays: DAILY_LENGTHS.includes(d.durationDays) ? d.durationDays : 30 })}
-                    title="Every day"
-                    body="The chain grows one link per day."
-                  />
-                  <Choice
-                    selected={d.cadence === "weekly"}
-                    onClick={() => set({ cadence: "weekly", durationDays: WEEKLY_LENGTHS.map((w) => w * 7).includes(d.durationDays) ? d.durationDays : 28 })}
-                    title="Some days a week"
-                    body="Pick a weekly target. One link per week."
-                  />
+                <div className="mt-8">
+                  <CadencePicker d={d} set={set} />
                 </div>
-                {d.cadence === "weekly" && (
-                  <div className="mt-6 flex items-center justify-between rounded-[22px] bg-paper p-4">
-                    <span className="text-[17px] font-bold">Times a week</span>
-                    <div className="flex items-center gap-4">
-                      <Stepper label="Fewer" onClick={() => set({ timesPerWeek: Math.max(1, d.timesPerWeek - 1) })} disabled={d.timesPerWeek <= 1}>
-                        −
-                      </Stepper>
-                      <span className="display tnum w-8 text-center text-[36px] font-extrabold" aria-live="polite">
-                        {d.timesPerWeek}
-                      </span>
-                      <Stepper label="More" onClick={() => set({ timesPerWeek: Math.min(6, d.timesPerWeek + 1) })} disabled={d.timesPerWeek >= 6}>
-                        +
-                      </Stepper>
-                    </div>
-                  </div>
-                )}
               </>
             )}
 
             {name === "How long" && !isBreak && (
               <>
                 <h1 className="display text-[48px] font-extrabold">For how long?</h1>
-                <div className="mt-8 grid grid-cols-3 gap-2" role="radiogroup" aria-label="Length">
-                  {(d.cadence === "daily" ? DAILY_LENGTHS : WEEKLY_LENGTHS.map((w) => w * 7)).map((n) => (
-                    <button
-                      key={n}
-                      role="radio"
-                      aria-checked={d.durationDays === n}
-                      onClick={() => set({ durationDays: n })}
-                      className={`h-[84px] rounded-[22px] text-left transition-colors ${d.durationDays === n ? "bg-blue text-white" : "bg-paper"}`}
-                    >
-                      <span className="display tnum block px-4 text-[36px] font-extrabold">{d.cadence === "daily" ? n : n / 7}</span>
-                      <span className="block px-4 text-[14px] font-semibold opacity-75">{d.cadence === "daily" ? "days" : "weeks"}</span>
-                    </button>
-                  ))}
+                <div className="mt-8">
+                  <LengthPicker weekly={d.cadence === "weekly"} value={d.durationDays} onPick={(n) => set({ durationDays: n })} />
                 </div>
                 <p className="mt-8 mb-3 text-[15px] font-bold text-ink-2">Starting</p>
-                <StartPicker offset={d.startOffset} weekly={d.cadence === "weekly"} onPick={(o) => set({ startOffset: o })} />
+                <StartOn offset={d.startOffset} weekly={d.cadence === "weekly"} onPick={(o) => set({ startOffset: o })} />
                 <p className="mt-6 text-[15px] leading-snug text-ink-2">
                   Everyone gets {freezesFor(d.cadence, d.durationDays)} {freezesFor(d.cadence, d.durationDays) === 1 ? "freeze" : "freezes"} of their own. A miss uses one, automatically.
                 </p>
@@ -577,68 +410,9 @@ export function CreateFlow() {
               <>
                 <h1 className="display text-[48px] font-extrabold">Track progress?</h1>
                 <p className="mt-3 text-[16px] leading-snug text-ink-2">Log a number each time and you get a chart of how you&apos;re improving. Skip it to just keep the streak.</p>
-                <div className="mt-6 grid grid-cols-2 gap-2" role="radiogroup" aria-label="What to track">
-                  {MEASURES.map((m) => (
-                    <button
-                      key={m.value}
-                      role="radio"
-                      aria-checked={d.measure === m.value}
-                      onClick={() =>
-                        set({
-                          measure: m.value,
-                          target: m.value === d.measure ? d.target : null,
-                          unit: m.value === "distance" ? "km" : m.value === "weight" ? "kg" : m.value === "count" && d.measure === "count" ? d.unit : "",
-                          direction: "up",
-                        })
-                      }
-                      className={`rounded-[20px] p-4 text-left transition-colors ${m.value === "none" ? "col-span-2" : ""} ${d.measure === m.value ? "bg-blue text-white" : "bg-paper"}`}
-                    >
-                      <span className="block text-[18px] font-extrabold">{m.label}</span>
-                      <span className="block text-[14px] opacity-75">{m.hint}</span>
-                    </button>
-                  ))}
+                <div className="mt-6">
+                  <TrackPicker d={d} set={set} />
                 </div>
-
-                {d.measure !== "none" && (
-                  <div className="mt-4 space-y-4 rounded-[22px] bg-paper p-4">
-                    {d.measure === "count" && (
-                      <Field label="What are you counting?">
-                        <input
-                          maxLength={24}
-                          value={d.unit}
-                          onChange={(e) => set({ unit: e.target.value })}
-                          placeholder="push-ups, pages, glasses"
-                          className="h-14 w-full rounded-2xl bg-mist px-4 text-[18px] font-semibold outline-none focus:ring-2 focus:ring-blue"
-                        />
-                      </Field>
-                    )}
-                    {d.measure === "distance" && (
-                      <Field label="Unit">
-                        <Segmented options={[["km", "Kilometres"], ["mi", "Miles"], ["m", "Metres"]]} value={d.unit} onChange={(v) => set({ unit: v, target: null })} />
-                      </Field>
-                    )}
-                    {d.measure === "weight" && (
-                      <>
-                        <Field label="Unit">
-                          <Segmented options={[["kg", "kg"], ["lb", "lb"]]} value={d.unit} onChange={(v) => set({ unit: v, target: null })} />
-                        </Field>
-                        <Field label="Which way is progress?">
-                          <Segmented options={[["up", "Heavier"], ["down", "Lighter"]]} value={d.direction} onChange={(v) => set({ direction: v as Direction })} />
-                        </Field>
-                      </>
-                    )}
-                    {d.measure === "time" && (
-                      <Field label="Which way is progress?">
-                        <Segmented options={[["up", "Longer (a hold, practice)"], ["down", "Faster (a run, a mile)"]]} value={d.direction} onChange={(v) => set({ direction: v as Direction })} />
-                      </Field>
-                    )}
-                    <Field label={d.direction === "down" && (d.measure === "time" || d.measure === "weight") ? "Goal (optional)" : "Minimum each time (optional)"}>
-                      <div className="rounded-2xl bg-mist/60 p-2">
-                        <ValueInput t={tracking} value={d.target} onChange={(v) => set({ target: v })} size="md" />
-                      </div>
-                    </Field>
-                  </div>
-                )}
                 <p className="mt-4 text-[14px] leading-snug text-ink-3">Every check-in can also be rated Tough, Good or Strong, so you see how it felt over time.</p>
               </>
             )}
@@ -660,25 +434,9 @@ export function CreateFlow() {
                     <LookPreview d={d} />
                   </div>
                 </div>
-                <div className="mt-4 flex justify-between" role="radiogroup" aria-label="Color">
-                  {COLORS.map((c) => (
-                    <button
-                      key={c}
-                      data-color={c}
-                      role="radio"
-                      aria-checked={d.color === c}
-                      aria-label={c}
-                      onClick={() => set({ color: c })}
-                      className="flex h-12 w-12 items-center justify-center rounded-full"
-                    >
-                      <span
-                        className="h-10 w-10 rounded-full bg-[var(--pact)] transition-shadow"
-                        style={{ boxShadow: d.color === c ? "0 0 0 3px var(--color-mist), 0 0 0 5.5px var(--pact)" : undefined }}
-                      />
-                    </button>
-                  ))}
+                <div className="mt-4">
+                  <ColorPicker value={d.color} onPick={(color) => set({ color })} />
                 </div>
-
               </>
             )}
           </motion.section>
@@ -700,65 +458,6 @@ export function CreateFlow() {
   );
 }
 
-function Choice({ selected, onClick, title, body }: { selected: boolean; onClick: () => void; title: string; body: string }) {
-  return (
-    <button
-      role="radio"
-      aria-checked={selected}
-      onClick={onClick}
-      className={`flex w-full items-center gap-4 rounded-[22px] p-5 text-left transition-colors ${selected ? "bg-blue text-white" : "bg-paper"}`}
-    >
-      <span className="flex-1">
-        <span className="block text-[20px] font-extrabold">{title}</span>
-        <span className="mt-0.5 block text-[15px] opacity-75">{body}</span>
-      </span>
-      <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 ${selected ? "border-white bg-white" : "border-line"}`} aria-hidden>
-        {selected && <span className="h-3 w-3 rounded-full bg-blue" />}
-      </span>
-    </button>
-  );
-}
-
-function Stepper({ children, onClick, disabled, label }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; label: string }) {
-  return (
-    <button
-      aria-label={label}
-      onClick={onClick}
-      disabled={disabled}
-      className="flex h-11 w-11 items-center justify-center rounded-full bg-mist text-[24px] font-bold disabled:opacity-30"
-    >
-      {children}
-    </button>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <p className="mb-2 text-[15px] font-bold text-ink-2">{label}</p>
-      {children}
-    </div>
-  );
-}
-
-function Segmented({ options, value, onChange }: { options: [string, string][]; value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="grid gap-1 rounded-2xl bg-mist p-1" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }} role="radiogroup">
-      {options.map(([v, label]) => (
-        <button
-          key={v}
-          role="radio"
-          aria-checked={value === v}
-          onClick={() => onChange(v)}
-          className={`min-h-11 rounded-xl px-2 py-2 text-[14px] leading-tight font-bold ${value === v ? "bg-ink text-white" : "text-ink-2"}`}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function optionCount(d: Draft) {
   return [d.askNextMorning, d.restDays !== 0, d.limitStep !== null, d.cravingPlan.trim() !== ""].filter(Boolean).length;
 }
@@ -766,65 +465,17 @@ function optionCount(d: Draft) {
 /** Everything beyond the basics, off by default. */
 function MoreOptions({ d, set, subject, open, onClose }: { d: Draft; set: (p: Partial<Draft>) => void; subject: string; open: boolean; onClose: () => void }) {
   const daily = d.mode !== "days";
-  const offCount = WEEK.filter((w) => d.restDays & (1 << w.bit)).length;
   return (
     <Sheet open={open} onClose={onClose} title="More options">
       <div className="space-y-5 pb-2">
-        <Toggle
+        <SwitchRow
           on={d.askNextMorning}
           onChange={(v) => set({ askNextMorning: v })}
           title="Ask me the next morning"
           body="For habits that run into the night, like no phone after 10pm. You'll only answer once the day is over."
         />
-        {daily && (
-          <div>
-            <p className="text-[17px] font-bold">Days off</p>
-            <p className="mt-0.5 text-[14px] leading-snug text-ink-2">
-              {d.restDays ? `Fine to have it ${restDaysText(d.restDays).replace("except ", "on ")}. Those days never break the streak.` : "Days the rule doesn't apply, like Fridays. They never break the streak."}
-            </p>
-            <div className="mt-3 grid grid-cols-7 gap-1.5" role="group" aria-label="Days off">
-              {WEEK.map((w) => {
-                const on = (d.restDays & (1 << w.bit)) !== 0;
-                return (
-                  <button
-                    key={w.bit}
-                    aria-pressed={on}
-                    aria-label={w.name}
-                    disabled={!on && offCount >= 6}
-                    onClick={() => set({ restDays: d.restDays ^ (1 << w.bit) })}
-                    className={`h-11 rounded-xl text-[15px] font-extrabold disabled:opacity-30 ${on ? "bg-ink text-white" : "bg-mist text-ink-2"}`}
-                  >
-                    {w.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-        {d.mode === "amount" && (
-          <div>
-            <Toggle
-              on={d.limitStep !== null}
-              onChange={(v) => set({ limitStep: v ? 1 : null })}
-              title="Lower the limit each week"
-              body={`Start at ${d.limit} ${d.limitUnit || "a day"} and come down week by week, until it's zero.`}
-            />
-            {d.limitStep !== null && (
-              <div className="mt-3 flex items-center justify-between rounded-2xl bg-mist p-3">
-                <span className="text-[15px] font-bold">Less each week</span>
-                <div className="flex items-center gap-3">
-                  <Stepper label="Less" onClick={() => set({ limitStep: Math.max(1, (d.limitStep ?? 1) - 1) })} disabled={(d.limitStep ?? 1) <= 1}>
-                    −
-                  </Stepper>
-                  <span className="display tnum w-8 text-center text-[28px] font-extrabold">{d.limitStep}</span>
-                  <Stepper label="More" onClick={() => set({ limitStep: Math.min(d.limit, (d.limitStep ?? 1) + 1) })} disabled={(d.limitStep ?? 1) >= d.limit}>
-                    +
-                  </Stepper>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        {daily && <RestDaysPicker d={d} set={set} />}
+        {d.mode === "amount" && <LimitStepPicker d={d} set={set} />}
         <Field label="My plan for cravings">
           <input
             maxLength={140}
@@ -837,33 +488,13 @@ function MoreOptions({ d, set, subject, open, onClose }: { d: Draft; set: (p: Pa
         </Field>
         <div>
           <p className="mb-2 text-[15px] font-bold text-ink-2">Colour</p>
-          <div className="flex justify-between" role="radiogroup" aria-label="Color">
-            {COLORS.map((c) => (
-              <button key={c} data-color={c} role="radio" aria-checked={d.color === c} aria-label={c} onClick={() => set({ color: c })} className="flex h-12 w-12 items-center justify-center rounded-full">
-                <span className="h-10 w-10 rounded-full bg-[var(--pact)]" style={{ boxShadow: d.color === c ? "0 0 0 3px var(--color-paper), 0 0 0 5.5px var(--pact)" : undefined }} />
-              </button>
-            ))}
-          </div>
+          <ColorPicker value={d.color} onPick={(color) => set({ color })} on="paper" />
         </div>
       </div>
       <button onClick={onClose} className="mt-4 mb-2 h-14 w-full rounded-2xl bg-ink text-[17px] font-extrabold text-white">
         Done
       </button>
     </Sheet>
-  );
-}
-
-function Toggle({ on, onChange, title, body }: { on: boolean; onChange: (v: boolean) => void; title: string; body: string }) {
-  return (
-    <button role="switch" aria-checked={on} onClick={() => onChange(!on)} className="flex w-full items-start gap-4 text-left">
-      <span className="flex-1">
-        <span className="block text-[17px] font-bold">{title}</span>
-        <span className="mt-0.5 block text-[14px] leading-snug text-ink-2">{body}</span>
-      </span>
-      <span className={`relative mt-1 h-7 w-12 shrink-0 rounded-full transition-colors ${on ? "bg-blue" : "bg-line"}`} aria-hidden>
-        <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-[left] ${on ? "left-[22px]" : "left-0.5"}`} />
-      </span>
-    </button>
   );
 }
 
@@ -889,35 +520,20 @@ function LookPreview({ d }: { d: Draft }) {
   );
 }
 
-/**
- * Today, tomorrow, or (weekly pacts) next Monday. A weekly pact's weeks start on its start day, so say which weekdays
- * they'll run: whoever sets it up picks the week for everyone.
- */
-function StartPicker({ offset, weekly, prefix = "", onPick }: { offset: number; weekly: boolean; prefix?: string; onPick: (o: number) => void }) {
+/** The start picker, in days from today: a Monday picked for a weekly pact falls back to today if it's daily now. */
+function StartOn({ offset, weekly, prefix, onPick }: { offset: number; weekly: boolean; prefix?: string; onPick: (o: number) => void }) {
   const today = todayIn(deviceTimeZone());
   const options = startOffsets(today, weekly);
-  // switched to daily (or the day moved on): fall back to today
   const chosen = options.includes(offset) ? offset : 0;
-  // three buttons don't fit "Start tomorrow"
-  const pre = options.length === 3 ? "" : prefix;
-  const label = (o: number) => (o === 0 ? `${pre}today` : o === 1 ? `${pre}tomorrow` : `${pre}Monday`);
   return (
-    <>
-      <div className={`grid gap-2 ${options.length === 3 ? "grid-cols-3" : "grid-cols-2"}`} role="radiogroup" aria-label="Start">
-        {options.map((o) => (
-          <button
-            key={o}
-            role="radio"
-            aria-checked={chosen === o}
-            onClick={() => onPick(o)}
-            className={`h-14 rounded-[18px] text-[17px] font-bold ${chosen === o ? "bg-ink text-white" : "bg-paper"}`}
-          >
-            {label(o)[0].toUpperCase() + label(o).slice(1)}
-          </button>
-        ))}
-      </div>
-      {weekly && <p className="mt-3 text-[15px] leading-snug font-semibold text-ink-2">Weeks will run {weeksRun(addDays(today, chosen))}.</p>}
-    </>
+    <StartPicker
+      days={options.map((o) => addDays(today, o))}
+      value={addDays(today, chosen)}
+      today={today}
+      weekly={weekly}
+      prefix={prefix}
+      onPick={(day) => onPick(diffDays(today, day))}
+    />
   );
 }
 

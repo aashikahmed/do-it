@@ -3,12 +3,13 @@
 import { after } from "next/server";
 import { refresh } from "next/cache";
 import { z } from "zod";
-import { getPactForUser, requireUser } from "@/lib/data";
+import { getPactForUser, requireUser, type Pact } from "@/lib/data";
 import { notifyCheckin } from "@/lib/notify";
 import { sendPush } from "@/lib/push";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { addDays, isValidTimeZone, todayIn } from "@/lib/dates";
-import { firstName, listNames, makeUpLabel } from "@/lib/view";
+import { breakModeOf, changesBody } from "@/lib/edit";
+import { breakTitle, firstName, inSentence, listNames, makeUpLabel, subjectOf } from "@/lib/view";
 import { planFreezes } from "@/lib/streak";
 import { deadlineText, pactDeadline, tzFor } from "@/lib/reminders";
 import { dayName, weekEndOn, weeksRun } from "@/lib/week";
@@ -55,6 +56,8 @@ function friendly(msg: string | undefined) {
     "There's nothing to save",
     "That's too many days at once",
     "Check the details and try again",
+    "That would already be over",
+    "Leave at least one day without a day off",
   ];
   const hit = known.find((k) => msg.includes(k));
   if (hit) return hit;
@@ -199,6 +202,99 @@ export async function leavePact(pactId: string): Promise<ActionResult> {
     if (error) return fail(friendly(error.message));
   }
   return { ok: true };
+}
+
+const rulesSchema = createSchema
+  .pick({ cadence: true, timesPerWeek: true, durationDays: true, startDate: true, measure: true, direction: true, target: true, restDays: true, limitStep: true, askNextMorning: true })
+  .extend({ unit: z.string().trim().max(24).nullable().optional() });
+
+const editSchema = z.object({
+  pactId: uuid,
+  /** build pacts: the name. Break pacts are named after what's being given up. */
+  title: z.string().trim().min(1, "Name your pact").max(60).optional(),
+  subject: z.string().trim().min(1, "Say what you're giving up").max(40).optional(),
+  emoji: createSchema.shape.emoji,
+  color: createSchema.shape.color,
+  /** only when they changed: they're refused once anyone has logged something */
+  rules: rulesSchema.optional(),
+});
+
+/**
+ * Edit pact: the name, icon and colour any time, the rules until anyone logs anything (update_pact() decides, so a
+ * check-in that lands while the form is open wins). `locked`: the rules were refused, the rest was saved.
+ */
+export async function editPact(input: z.input<typeof editSchema>): Promise<ActionResult<{ locked: boolean }>> {
+  const parsed = editSchema.safeParse(input);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Check the details and try again");
+  const v = parsed.data;
+  const { supabase, userId } = await requireUser();
+  const { data: before } = await supabase.from("pacts").select("*").eq("id", v.pactId).maybeSingle<Pact>();
+  if (!before) return fail("Pact not found");
+  if (before.created_by !== userId) return fail("Only the person who started the pact can change this");
+  if (todayIn(before.timezone) > addDays(before.start_date, before.duration_days - 1)) return fail("This pact has already finished");
+
+  let outcome = "same" as "changed" | "same" | "locked";
+  if (v.rules) {
+    const r = v.rules;
+    const { data, error } = await supabase.rpc("update_pact", {
+      p_pact: v.pactId,
+      p_cadence: r.cadence,
+      p_times_per_week: r.cadence === "daily" ? 7 : r.timesPerWeek,
+      p_duration_days: r.durationDays,
+      p_start_date: r.startDate,
+      p_measure: r.measure,
+      p_direction: r.direction,
+      p_unit: r.unit || null,
+      p_target: r.measure !== "none" && r.target ? r.target : null,
+      p_rest_days: r.restDays ?? 0,
+      p_limit_step: r.limitStep ?? null,
+      p_ask_next_morning: !!r.askNextMorning,
+    });
+    if (error) return fail(friendly(error.message));
+    outcome = data as typeof outcome;
+  }
+
+  // what a break pact is called follows from what's given up and how much is OK ("No soda", "Less soda")
+  const now = outcome === "changed" && v.rules ? v.rules : before;
+  const look: Partial<Pick<Pact, "title" | "subject" | "emoji" | "color">> = { emoji: v.emoji, color: v.color };
+  if (before.kind === "break") {
+    const subject = inSentence(v.subject ?? subjectOf(before));
+    const mode = breakModeOf(now);
+    look.subject = subject;
+    look.title = subject === before.subject && mode === breakModeOf(before) ? before.title : breakTitle(subject, mode);
+  } else if (v.title) {
+    look.title = v.title;
+  }
+  if (Object.entries(look).some(([k, x]) => before[k as keyof typeof look] !== x)) {
+    const { error } = await supabase.from("pacts").update(look).eq("id", v.pactId);
+    if (error) {
+      // the rules may already be saved: show what's really there
+      refresh();
+      return fail(friendly(error.message));
+    }
+  }
+
+  // Everyone else hears when the rules they joined under changed. A rename shows up on its own, and break pacts only
+  // show the card: they get no push outside the morning one.
+  if (outcome === "changed" && before.kind === "build") {
+    after(async () => {
+      const admin = createAdminClient();
+      const [{ data: pact }, { data: members }, name] = await Promise.all([
+        admin.from("pacts").select("*").eq("id", v.pactId).single<Pact>(),
+        admin.from("pact_members").select("user_id").eq("pact_id", v.pactId).is("left_on", null),
+        displayName(userId),
+      ]);
+      if (!pact) return;
+      const body = changesBody(before, pact, todayIn(pact.timezone));
+      if (!body) return;
+      await sendPush(
+        (members ?? []).map((m) => m.user_id).filter((u) => u !== userId),
+        { title: `${pact.emoji} ${firstName(name)} changed ${pact.title}`, body, url: `/p/${pact.id}`, tag: `pact-${pact.id}` },
+      );
+    });
+  }
+  refresh();
+  return { ok: true, data: { locked: outcome === "locked" } };
 }
 
 /** "Go again": start the next round of a finished pact with the same settings and everyone still in it. */

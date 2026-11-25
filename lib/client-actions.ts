@@ -24,6 +24,7 @@ export const syncTimeZone = wrap(A.syncTimeZone);
 export const createPact = wrap(A.createPact);
 export const joinPact = wrap(A.joinPact);
 export const leavePact = wrap(A.leavePact);
+export const editPact = wrap(A.editPact);
 export const startNextRound = wrap(A.startNextRound);
 export const checkIn = wrap(A.checkIn);
 export const updateCheckIn = wrap(A.updateCheckIn);
