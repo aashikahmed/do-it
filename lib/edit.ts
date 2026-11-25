@@ -6,7 +6,7 @@
 
 import { addDays, diffDays, formatDay, type Day } from "./dates";
 import type { Pact, PactBundle } from "./data";
-import { targetText, type Direction, type Measure } from "./measure";
+import { targetText, unitFor, type Direction, type Measure } from "./measure";
 import { allowedDays, firstName, restDaysText, type BreakMode } from "./view";
 import { startOffsets, weeksRun } from "./week";
 
@@ -47,6 +47,15 @@ export function breakModeOf(p: Pick<Pact, "cadence" | "measure">): BreakMode {
 }
 
 // ── the form ──
+
+export const DAILY_LENGTHS = [7, 14, 21, 30, 60, 90];
+export const WEEKLY_LENGTHS = [4, 8, 12].map((w) => w * 7);
+
+/** the length to keep when the cadence changes: the same one if it's on offer, otherwise the usual one */
+export function lengthFor(cadence: "daily" | "weekly", days: number) {
+  if (cadence === "weekly") return WEEKLY_LENGTHS.includes(days) ? days : 28;
+  return DAILY_LENGTHS.includes(days) ? days : 30;
+}
 
 /** The rules as the create flow and the edit screen hold them while someone is choosing. */
 export interface RuleDraft {
@@ -188,7 +197,7 @@ function often(r: PactRules, kind: Pact["kind"]) {
   if (kind === "break") {
     const mode = breakModeOf(r);
     if (mode === "days") return `up to ${allowedDays(r)} ${allowedDays(r) === 1 ? "day" : "days"} a week`;
-    if (mode === "amount") return `up to ${r.target} ${r.unit ?? ""} a day`.replace(/ +/g, " ");
+    if (mode === "amount") return `up to ${r.target} ${unitFor(r.target, r.unit)} a day`.replace(/ +/g, " ");
     return "none at all";
   }
   return r.cadence === "daily" ? "every day" : r.times_per_week === 1 ? "once a week" : `${r.times_per_week} times a week`;

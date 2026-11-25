@@ -15,6 +15,7 @@ import {
   targetText,
   timeJumps,
   timeWheels,
+  unitFor,
 } from "./measure";
 
 describe("formatting", () => {
@@ -29,6 +30,19 @@ describe("formatting", () => {
     expect(formatValue({ measure: "time", unit: null }, 600)).toBe("10:00");
     expect(formatValue({ measure: "distance", unit: "km" }, 5.25)).toBe("5.3 km");
     expect(formatValue({ measure: "weight", unit: "kg" }, 62.5)).toBe("62.5 kg");
+  });
+  it("names one of something in the singular", () => {
+    expect(formatValue({ measure: "count", unit: "pages" }, 1)).toBe("1 page");
+    expect(formatValue({ measure: "count", unit: "pages" }, 0)).toBe("0 pages");
+    expect(targetText({ measure: "count", direction: "up", unit: "glasses", target: 1 })).toBe("At least 1 glass");
+    const one = (u: string) => unitFor(1, u);
+    expect(["push-ups", "good things", "cans or glasses", "kinds of bird", "meals with a phone"].map(one)).toEqual(["push-up", "good thing", "can or glass", "kind of bird", "meal with a phone"]);
+    expect(["fixes", "dishes", "stories", "exercises", "minutes", "times"].map(one)).toEqual(["fix", "dish", "story", "exercise", "minute", "time"]);
+    // not a plural we know, or not English: left alone
+    expect(["press", "km", "bus", "صفحات", "Seiten"].map(one)).toEqual(["press", "km", "bus", "صفحات", "Seiten"]);
+    expect(unitFor(2, "pages")).toBe("pages");
+    expect(unitFor(null, "pages")).toBe("pages");
+    expect(unitFor(1, null)).toBe("");
   });
   it("words the minimum by direction", () => {
     expect(targetText({ measure: "count", direction: "up", unit: "push-ups", target: 20 })).toBe("At least 20 push-ups");

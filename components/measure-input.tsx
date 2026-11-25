@@ -13,11 +13,12 @@ import {
   tapeFor,
   timeJumps,
   timeWheels,
+  unitFor,
   type Feel,
   type Tracking,
 } from "@/lib/measure";
 
-const clampTo = (v: number, max = MAX_VALUE) => Math.max(0, Math.min(max, v));
+const clampTo = (v: number, max = MAX_VALUE, min = 0) => Math.max(min, Math.min(max, v));
 const round2 = (v: number) => Math.round(v * 100) / 100;
 const roundTo = (v: number, s: number) => Math.round(v / s) * s;
 const nf = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -43,8 +44,9 @@ function prefersReducedMotion() {
  * The right picker for the pact's measure. `value` is in the stored unit (seconds for time).
  * Count: ± (held speeds up), elastic scrub and jump chips. Time: wheels and chips.
  * Distance and weight: a tape at 0.1 per tick (10 m for metres). The number can always be typed.
+ * `min` (counts only) is the lowest it goes, for numbers that can't be empty, like a daily limit.
  */
-type Props = { t: Tracking; value: number | null; onChange: Change; size?: Size; id?: string };
+type Props = { t: Tracking; value: number | null; onChange: Change; size?: Size; id?: string; min?: number };
 
 export function ValueInput(props: Props) {
   // Start fresh when what's measured changes (the create flow switches these), so Reset, chip sizes and time wheels
@@ -53,42 +55,42 @@ export function ValueInput(props: Props) {
   return <Picker key={`${measure}|${unit ?? ""}|${direction}`} {...props} />;
 }
 
-function Picker({ t, value, onChange, size = "lg", id }: Props) {
+function Picker({ t, value, onChange, size = "lg", id, min = 0 }: Props) {
   // What the input opened with (the last logged value, or the target), for the Reset chip.
   const [start] = useState(value);
   if (t.measure === "time") return <TimeInput t={t} value={value} onChange={onChange} start={start} size={size} id={id} />;
-  if (t.measure === "count") return <CountInput t={t} value={value} onChange={onChange} start={start} size={size} id={id} />;
+  if (t.measure === "count") return <CountInput t={t} value={value} onChange={onChange} start={start} size={size} id={id} min={min} />;
   return <TapeInput t={t} value={value} onChange={onChange} start={start} size={size} id={id} />;
 }
 
 /* ---------- Count ---------- */
 
-function CountInput({ t, value, onChange, start, size, id }: { t: Tracking; value: number | null; onChange: Change; start: number | null; size: Size; id?: string }) {
+function CountInput({ t, value, onChange, start, size, id, min }: { t: Tracking; value: number | null; onChange: Change; start: number | null; size: Size; id?: string; min: number }) {
   // Sized once: chips that resize under your finger are hard to hit twice.
   const [jumps] = useState(() => countJumps(t.target === null || start === null ? (t.target ?? start) : Math.max(t.target, start)));
   const fmt = (n: number) => nf.format(n);
   return (
     <div className="space-y-2.5">
       <div className="flex items-center gap-2">
-        <HoldStep dir={-1} value={value} onChange={onChange} size={size} />
-        <NumberField t={t} value={value} onChange={onChange} size={size} id={id} />
-        <HoldStep dir={1} value={value} onChange={onChange} size={size} />
+        <HoldStep dir={-1} value={value} onChange={onChange} size={size} min={min} />
+        <NumberField t={t} value={value} onChange={onChange} size={size} id={id} min={min} />
+        <HoldStep dir={1} value={value} onChange={onChange} size={size} min={min} />
       </div>
       <TypeHint />
-      <Scrub value={value} onChange={onChange} unit={t.unit} size={size} />
+      <Scrub value={value} onChange={onChange} unit={t.unit} size={size} min={min} />
       <Chips
         size={size}
         value={value}
         onChange={onChange}
         start={start}
-        jumps={[-jumps[0], ...jumps].map((j) => ({ label: `${j < 0 ? "−" : "+"}${fmt(Math.abs(j))}`, apply: (v) => clampTo(v + j) }))}
+        jumps={[-jumps[0], ...jumps].map((j) => ({ label: `${j < 0 ? "−" : "+"}${fmt(Math.abs(j))}`, apply: (v) => clampTo(v + j, MAX_VALUE, min) }))}
       />
     </div>
   );
 }
 
 /** ± that steps by one on a tap and speeds up while held (see heldStep). */
-function HoldStep({ dir, value, onChange, size }: { dir: 1 | -1; value: number | null; onChange: Change; size: Size }) {
+function HoldStep({ dir, value, onChange, size, min }: { dir: 1 | -1; value: number | null; onChange: Change; size: Size; min: number }) {
   // Written ahead of the parent's re-render, so fast repeats build on the last step.
   const cur = useRef(value);
   useLayoutEffect(() => {
@@ -101,7 +103,7 @@ function HoldStep({ dir, value, onChange, size }: { dir: 1 | -1; value: number |
   function bump(heldMs: number) {
     const v = cur.current ?? 0;
     const s = heldStep(v, heldMs);
-    const next = clampTo(heldMs < 900 ? v + dir * s : roundTo(v + dir * s, s));
+    const next = clampTo(heldMs < 900 ? v + dir * s : roundTo(v + dir * s, s), MAX_VALUE, min);
     cur.current = next;
     emit.current(next);
   }
@@ -156,7 +158,7 @@ function HoldStep({ dir, value, onChange, size }: { dir: 1 | -1; value: number |
  * Pull the handle and hold: the further from the middle, the faster the number runs, scaled to where
  * you started. Let go and it springs back. The number snaps coarser while it moves fast.
  */
-function Scrub({ value, onChange, unit, size }: { value: number | null; onChange: Change; unit: string | null; size: Size }) {
+function Scrub({ value, onChange, unit, size, min }: { value: number | null; onChange: Change; unit: string | null; size: Size; min: number }) {
   const track = useRef<HTMLDivElement>(null);
   const thumb = useRef<HTMLDivElement>(null);
   const ticks = useRef<HTMLDivElement>(null);
@@ -179,9 +181,9 @@ function Scrub({ value, onChange, unit, size }: { value: number | null; onChange
     st.last = now;
     const rate = scrubRate(st.dx / limit(), st.anchor + st.acc);
     st.acc += rate * dt;
-    const raw = clampTo(st.anchor + st.acc);
+    const raw = clampTo(st.anchor + st.acc, MAX_VALUE, min);
     st.acc = raw - st.anchor;
-    const next = clampTo(roundTo(raw, gran(Math.abs(rate))));
+    const next = clampTo(roundTo(raw, gran(Math.abs(rate))), MAX_VALUE, min);
     if (next !== cur.current) {
       cur.current = next;
       emit.current(next);
@@ -207,8 +209,8 @@ function Scrub({ value, onChange, unit, size }: { value: number | null; onChange
       role="slider"
       tabIndex={0}
       aria-label={`Drag to change ${unit ?? "the number"}. Further from the middle is faster.`}
-      aria-valuenow={value ?? 0}
-      aria-valuemin={0}
+      aria-valuenow={value ?? min}
+      aria-valuemin={min}
       aria-valuemax={MAX_VALUE}
       className={`relative h-12 touch-none overflow-hidden rounded-full select-none ${well(size)} ${on ? "cursor-grabbing" : "cursor-grab"}`}
       onPointerDown={(e) => {
@@ -237,7 +239,7 @@ function Scrub({ value, onChange, unit, size }: { value: number | null; onChange
         const d = e.key === "ArrowRight" || e.key === "ArrowUp" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 0;
         if (!d) return;
         e.preventDefault();
-        emit.current(clampTo((cur.current ?? 0) + d * (e.shiftKey ? 10 : 1)));
+        emit.current(clampTo((cur.current ?? 0) + d * (e.shiftKey ? 10 : 1), MAX_VALUE, min));
       }}
     >
       <div
@@ -647,26 +649,34 @@ function Chips({
 }
 
 /** The number itself, always typeable. */
-function NumberField({ t, value, onChange, size, id }: { t: Tracking; value: number | null; onChange: Change; size: Size; id?: string }) {
+function NumberField({ t, value, onChange, size, id, min = 0 }: { t: Tracking; value: number | null; onChange: Change; size: Size; id?: string; min?: number }) {
+  // with a lowest value there's no empty: clearing it to type a new one leaves the field blank until a digit comes
+  const [blank, setBlank] = useState(false);
   return (
     <div className="flex min-w-0 flex-1 items-baseline justify-center gap-1">
       <input
         id={id}
         inputMode={t.measure === "count" || t.unit === "m" ? "numeric" : "decimal"}
-        value={value === null ? "" : String(value)}
-        placeholder="0"
+        value={value === null || blank ? "" : String(value)}
+        placeholder={min ? String(min) : "0"}
+        onBlur={() => setBlank(false)}
         onChange={(e) => {
           const raw = e.target.value.replace(/[^0-9.]/g, "").slice(0, 8);
-          if (raw === "") return onChange(null);
+          if (raw === "") {
+            setBlank(min > 0);
+            return onChange(min > 0 ? min : null);
+          }
           const n = Number(raw);
-          if (Number.isFinite(n)) onChange(clampTo(n));
+          if (!Number.isFinite(n)) return;
+          setBlank(false);
+          onChange(clampTo(n, MAX_VALUE, min));
         }}
         className={`display tnum w-[4.2ch] min-w-0 bg-transparent text-right font-extrabold outline-none placeholder:text-ink-3/50 ${
           size === "lg" ? "text-[40px]" : "text-[30px]"
         }`}
         aria-label={`How many ${t.unit ?? ""}`.trim()}
       />
-      <span className="truncate pl-1 text-[16px] font-bold text-ink-2">{t.unit}</span>
+      <span className="truncate pl-1 text-[16px] font-bold text-ink-2">{t.measure === "count" ? unitFor(value, t.unit) : t.unit}</span>
     </div>
   );
 }

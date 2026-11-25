@@ -1,5 +1,6 @@
 import type { PactBundle } from "./data";
 import { formatDay, diffDays, type Day } from "./dates";
+import { unitFor } from "./measure";
 import { limitOn, planFreezes, type Cadence, type Kind, type LateOutcome } from "./streak";
 import { weekAtRisk, weekEndsText, weekNote, weekOutlook } from "./week";
 
@@ -158,7 +159,7 @@ export function cadenceText(p: ScheduleBits) {
     }
     if (p.measure === "count" && p.target) {
       const less = p.limit_step ? `, ${num(p.limit_step)} less each week` : "";
-      return `Up to ${num(p.target)} ${p.unit ?? ""} a day${less}${off}, for ${p.duration_days} days`.replace(/ +/g, " ");
+      return `Up to ${num(p.target)} ${unitFor(p.target, p.unit ?? null)} a day${less}${off}, for ${p.duration_days} days`.replace(/ +/g, " ");
     }
     return `Every day${off}, for ${p.duration_days} days`;
   }

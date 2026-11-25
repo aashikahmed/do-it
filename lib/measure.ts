@@ -37,13 +37,30 @@ export function formatDuration(totalSeconds: number) {
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
 }
 
-/** Value with its unit, for sentences: "35 push-ups", "29:20", "5.2 km". */
+/** "pages" → "page" for one of them. Units are typed by people, so anything that isn't a plain English plural stays as it is. */
+export function unitFor(n: number | null, unit: string | null) {
+  if (n !== 1 || !unit) return unit ?? "";
+  // "kinds of bird", "meals with a phone": the plural is before the "of"; "cans or glasses": both sides
+  const [, head, tail = ""] = /^(.*?)( (?:of|with|in|on|for) .*)?$/.exec(unit)!;
+  return head.split(" or ").map(singular).join(" or ") + tail;
+}
+
+function singular(words: string) {
+  return words.replace(/[A-Za-z-]+$/, (w) => {
+    if (!/s$/i.test(w) || /(ss|us|is)$/i.test(w) || w.length < 4) return w;
+    if (/[^aeiou]ies$/i.test(w) && w.length > 4) return w.slice(0, -3) + "y";
+    if (/(sses|xes|shes|[^a]ches)$/i.test(w)) return w.slice(0, -2);
+    return w.slice(0, -1);
+  });
+}
+
+/** Value with its unit, for sentences: "35 push-ups", "1 page", "29:20", "5.2 km". */
 export function formatValue(t: Pick<Tracking, "measure" | "unit">, v: number) {
   switch (t.measure) {
     case "time":
       return formatDuration(v);
     case "count":
-      return `${num(v)} ${t.unit ?? ""}`.trim();
+      return `${num(v)} ${unitFor(v, t.unit)}`.trim();
     case "distance":
     case "weight":
       return `${num(v, 1)} ${t.unit ?? ""}`.trim();
