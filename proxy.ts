@@ -4,6 +4,8 @@ import { isAdminEmail } from "@/lib/admin-access";
 
 const PUBLIC = [/^\/$/, /^\/signin/, /^\/j\//, /^\/api\/cron/, /^\/auth\//, /^\/api\/auth\//];
 
+const NO_STORE = "private, no-cache, no-store, max-age=0, must-revalidate";
+
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -15,10 +17,12 @@ export async function proxy(request: NextRequest) {
         getAll() {
           return request.cookies.getAll();
         },
-        setAll(toSet) {
+        setAll(toSet, headers) {
           toSet.forEach(({ name, value }) => request.cookies.set(name, value));
           response = NextResponse.next({ request });
           toSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+          // a response that carries a session must never be stored by anything on the way
+          Object.entries(headers).forEach(([k, v]) => response.headers.set(k, v));
         },
       },
     },
@@ -49,6 +53,10 @@ export async function proxy(request: NextRequest) {
     return redirect;
   }
 
+  // Pages are never saved by the browser. Without no-store, iOS keeps a copy in the Home Screen app's own folder and
+  // puts it back, however old, after it ends the app's page in the background. Only pages: data requests and
+  // prefetches don't ask for HTML, and the shell in front of them is still cached at the edge.
+  if (request.headers.get("accept")?.includes("text/html")) response.headers.set("Cache-Control", NO_STORE);
   return response;
 }
 

@@ -59,11 +59,19 @@ const TEMPLATES: (Partial<Draft> & { title: string; emoji: string })[] = [
 const BUILD_STEPS = ["Kind", "What", "How often", "How long", "Track", "Look"] as const;
 const BREAK_STEPS = ["Kind", "What", "How much", "How long"] as const;
 
+/**
+ * The router keeps this screen alive after you leave it, so without a key "New pact" would come back on the last
+ * pact's "Now bring someone in". Every fresh visit starts over; going back to it doesn't.
+ */
 export function CreateFlow() {
-  const router = useRouter();
-  const params = useSearchParams();
+  const { bfcacheId } = useRouter();
   // "Build a habit in its place" lands here with ?kind=build, already past the first question
-  const preset = params.get("kind") === "build" ? "build" : null;
+  const preset = useSearchParams().get("kind") === "build" ? "build" : null;
+  return <Flow key={`${bfcacheId}-${preset}`} preset={preset} />;
+}
+
+function Flow({ preset }: { preset: "build" | null }) {
+  const router = useRouter();
   const [step, setStep] = useState(preset ? 1 : 0);
   const [dir, setDir] = useState(1);
   const [busy, setBusy] = useState(false);

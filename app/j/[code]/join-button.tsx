@@ -1,13 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { joinPact } from "@/lib/client-actions";
 import { toast } from "@/components/toast";
 
 export function JoinButton({ code, signedIn }: { code: string; signedIn: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  // this screen is kept after you leave it: don't come back to "Joining…"
+  useLayoutEffect(() => () => setBusy(false), []);
 
   async function join() {
     if (!signedIn) {
@@ -22,6 +24,8 @@ export function JoinButton({ code, signedIn }: { code: string; signedIn: boolean
     }
     navigator.vibrate?.(18);
     router.replace(`/p/${res.data!.id}`);
+    // home may be kept from before, without this pact
+    router.refresh();
   }
 
   return (

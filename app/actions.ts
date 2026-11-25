@@ -153,6 +153,8 @@ export async function createPact(input: z.input<typeof createSchema>): Promise<A
   });
   if (error || !id) return fail(friendly(error?.message));
   const { data: pact } = await supabase.from("pacts").select("invite_code").eq("id", id).single();
+  // drops the screens the router kept, so going back to home shows the new pact
+  refresh();
   return { ok: true, data: { id: id as string, code: pact?.invite_code ?? "" } };
 }
 

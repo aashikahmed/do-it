@@ -120,18 +120,19 @@ export interface Me {
   avatar_url: string | null;
 }
 
+/** `at`: when this screen's data started loading, for components/fresh.tsx. */
 export async function requireUser() {
   const supabase = await createClient();
   const { data } = await supabase.auth.getClaims();
   const userId = data?.claims?.sub;
   if (!userId) redirect("/signin");
-  return { supabase, userId: userId as string, email: (data?.claims?.email as string | undefined) ?? "" };
+  return { supabase, userId: userId as string, email: (data?.claims?.email as string | undefined) ?? "", at: Date.now() };
 }
 
 export async function optionalUser() {
   const supabase = await createClient();
   const { data } = await supabase.auth.getClaims();
-  return { supabase, userId: (data?.claims?.sub as string | undefined) ?? null };
+  return { supabase, userId: (data?.claims?.sub as string | undefined) ?? null, at: Date.now() };
 }
 
 type Row = Record<string, unknown>;
@@ -240,21 +241,21 @@ export async function getHome() {
   return { me, bundles };
 }
 
-export async function getPact(id: string): Promise<{ me: Me; bundle: PactBundle | null; series: Series | null }> {
-  const { supabase, userId } = await requireUser();
-  if (!/^[0-9a-f-]{36}$/i.test(id)) return { me: await getMe(supabase, userId), bundle: null, series: null };
+export async function getPact(id: string): Promise<{ me: Me; bundle: PactBundle | null; series: Series | null; at: number }> {
+  const { supabase, userId, at } = await requireUser();
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return { me: await getMe(supabase, userId), bundle: null, series: null, at };
   const [me, bundles, links] = await Promise.all([
     getMe(supabase, userId),
     loadBundles(supabase, id),
     supabase.from("pacts").select("id,previous_id,round").returns<RoundLink[]>(),
   ]);
   const bundle = bundles[0] ?? null;
-  if (!bundle) return { me, bundle, series: null };
+  if (!bundle) return { me, bundle, series: null, at };
   // other rounds of the same pact (Go again): one more round-trip, only when there are any
   const ids = seriesIds(links.data ?? [], id);
-  if (ids.length < 2) return { me, bundle, series: null };
+  if (ids.length < 2) return { me, bundle, series: null, at };
   const others = await loadBundles(supabase, ids.filter((x) => x !== id));
-  return { me, bundle, series: buildSeries([bundle, ...others], ids, id, userId) };
+  return { me, bundle, series: buildSeries([bundle, ...others], ids, id, userId), at };
 }
 
 export async function getPactForUser(supabase: SupabaseClient, id: string) {

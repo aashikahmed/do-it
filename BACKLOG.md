@@ -52,6 +52,16 @@ Open questions:
 
 Things we decided not to do yet during other work.
 
+### Remove the saved-copy cleanup
+Added 2026-11-26 · `idea`
+
+`dropSavedCopy()` in `components/service-worker.tsx` asks for each page once more per device, to remove copies iOS saved before pages were sent with `no-store`. Delete it once nobody opens the app from before then (a couple of months).
+
+### Check an installed Android app
+Added 2026-11-26 · `idea`
+
+Staying current was tested on Android in a Chrome tab only: an emulator can't install the app from localhost. Repeat the close, kill and no-connection checks on a real phone with the app installed.
+
 ### Make a new pact from this one
 Added 2026-11-25 · `idea`
 
