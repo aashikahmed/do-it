@@ -50,9 +50,30 @@ Open questions:
 
 ## Deferred
 
-Things we decided not to do yet during other work. None yet.
+Things we decided not to do yet during other work.
+
+### Make a new pact from this one
+Added 2026-11-25 · `idea`
+
+For a running pact whose rules are wrong on day five, where Edit only covers the name and look: open the create flow filled in with its settings. Members would have to join again.
+
+Open question: is it needed now that rules can change until the first check-in, and between rounds?
+
+### Read a new pact back before inviting
+Added 2026-11-25 · `idea`
+
+A one-line summary with Edit on "Now bring someone in", since the create flow never reads the choices back. Left out of Edit a pact: the owner wants Edit in the pact's menu only.
 
 ## Shipped or dropped
+
+### Edit a pact
+Added 2026-11-25 · `in progress`
+
+Fix a mistake without deleting the pact and resending the link. Proposal: https://claude.ai/artifact/2YErZ2rJBzonFZkdhkQLmY. Built A (rename and restyle any time) and B (every rule until anyone logs anything), from the pact's menu only. The other two parts are under Deferred.
+
+Decided:
+- Rules can change after others join, as long as nothing's logged and they're told. A rename tells nobody.
+- The minimum each time locks with the rest, though the app doesn't enforce it. The easiest one to open up later.
 
 ### Show where the week ends
 Added 2026-11-19, reworked 2026-11-23 · `shipped` in [#29](https://github.com/aashikahmed/do-it/pull/29) (A + C), [#30](https://github.com/aashikahmed/do-it/pull/30) (B) and [#31](https://github.com/aashikahmed/do-it/pull/31) (D)

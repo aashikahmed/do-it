@@ -55,12 +55,14 @@ import { logAvatarTap } from "@/lib/track";
 import { ValueInput } from "@/components/measure-input";
 import { Activity } from "./activity";
 import { CatchUpCard, EarlierPanel, EarlierSheet, hasEarlierDays } from "./earlier";
+import { ChangedCard, EditPact } from "./edit-pact";
 import { EditSheet, EntryFields } from "./entry";
 import { ProgressView } from "@/components/progress-view";
 
 export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Series | null }) {
   const { pact, state, members } = b;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [burst, setBurst] = useState<{ title: string; subtitle?: string } | null>(null);
   useFinishMoment(b, setBurst);
   const [tab, setTab] = useState<"today" | "progress">("today");
@@ -103,6 +105,7 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
           state.repair && <RepairCard b={b} me={me.id} />
         )}
         <CatchUpCard b={b} me={me.id} />
+        <ChangedCard b={b} me={me.id} />
         {state.phase === "ended" ? (
           <>
             <Recap b={b} me={me} />
@@ -128,7 +131,17 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
         </BottomDock>
       )}
 
-      <MenuSheet b={b} me={me} open={menuOpen} onClose={() => setMenuOpen(false)} />
+      <MenuSheet
+        b={b}
+        me={me}
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        onEdit={() => {
+          setMenuOpen(false);
+          setEditing(true);
+        }}
+      />
+      <EditPact b={b} me={me.id} open={editing && state.phase !== "ended"} onClose={() => setEditing(false)} />
       <Burst show={!!burst} title={burst?.title ?? ""} subtitle={burst?.subtitle} onDone={() => setBurst(null)} />
     </main>
   );
@@ -1623,7 +1636,7 @@ function AllRounds({ b, series }: { b: PactBundle; series: Series }) {
 
 // ───────────────────────── menu ─────────────────────────
 
-function MenuSheet({ b, me, open, onClose }: { b: PactBundle; me: Me; open: boolean; onClose: () => void }) {
+function MenuSheet({ b, me, open, onClose, onEdit }: { b: PactBundle; me: Me; open: boolean; onClose: () => void; onEdit: () => void }) {
   const owner = b.pact.created_by === me.id;
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1675,10 +1688,15 @@ function MenuSheet({ b, me, open, onClose }: { b: PactBundle; me: Me; open: bool
           ? "Each day closes a link when everyone says they stayed off it. You can answer until midnight the next day. If you give in, one of your own freezes covers it automatically. Out of freezes, or quiet for 3 days, and you're paused: the chain carries on without you until your next yes. You only count once you've said yes for a day. Notifications only come in the morning, and never say what the pact is about."
           : "The chain closes a link when everyone checks in. Miss a day and you can make it up the next day, until midnight. After that one of your own freezes covers it, automatically. Out of freezes, or quiet for 3 days, and you're paused: the chain carries on without you until your next check-in. Nobody counts until their first check-in, so someone who never starts can't break it."}
       </p>
+      {owner && b.state.phase !== "ended" && (
+        <button onClick={onEdit} className="mt-5 h-14 w-full rounded-2xl bg-mist text-[16px] font-bold">
+          Edit pact
+        </button>
+      )}
       <button
         disabled={busy}
         onClick={() => (confirm ? leave() : setConfirm(true))}
-        className={`mt-5 h-14 w-full rounded-2xl text-[16px] font-bold ${confirm ? "bg-ember text-white" : "text-ember"}`}
+        className={`${owner && b.state.phase !== "ended" ? "mt-2" : "mt-5"} h-14 w-full rounded-2xl text-[16px] font-bold ${confirm ? "bg-ember text-white" : "text-ember"}`}
       >
         {confirm ? (owner ? "Tap again to delete it for everyone" : "Tap again to leave") : owner ? "Delete pact" : "Leave pact"}
       </button>

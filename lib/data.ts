@@ -7,6 +7,7 @@ import { computePactState, type Cadence, type Kind, type PactState } from "./str
 import type { Direction, Measure } from "./measure";
 import { buildSeries, seriesIds, type RoundLink, type Series } from "./rounds";
 import type { DayChange } from "./activity";
+import type { PactEdit } from "./edit";
 
 export type PactColor = "blue" | "sun" | "ember" | "mint" | "violet" | "rose";
 
@@ -42,6 +43,8 @@ export interface Pact {
   /** break pacts: today can only be answered the next morning */
   ask_next_morning: boolean;
   craving_plan: string | null;
+  /** what the rules were before each edit, for anyone who joined under them (lib/edit.ts) */
+  edits?: PactEdit[];
 }
 
 /** Break pacts open today's question at 6pm (pact time), or not at all when they ask the next morning. */

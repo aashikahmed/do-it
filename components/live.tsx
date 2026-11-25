@@ -43,6 +43,8 @@ export function Live({ pactIds, days = [] }: { pactIds: string[]; days?: { tz: s
       for (const table of ["checkins", "freezes", "nudges", "pact_members", "misses", "hearts"]) {
         channel.on("postgres_changes", { event: "*", schema: "public", table, filter }, soon);
       }
+      // the pact itself, when its creator edits it
+      channel.on("postgres_changes", { event: "UPDATE", schema: "public", table: "pacts", filter: filter.replace(/^pact_id/, "id") }, soon);
       // Realtime enforces RLS, so it must carry the user's token before subscribing.
       supabase.auth.getSession().then(async ({ data }) => {
         if (cancelled) return;
