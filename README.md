@@ -32,7 +32,7 @@ Phones keep old pages around in more ways than one, and a Home Screen app has no
 - **No connection.** Background refreshes check the server answers first (`lib/refresh.ts`): a failed refresh makes Next.js load the whole page, which offline means the browser's error page. Page loads that do fail get our own page from `public/sw.js`, which opens the real one once there's a connection. Nothing is cached there.
 - **Live changes** come over Supabase Realtime (`components/live.tsx`), including being added to a pact.
 
-Testing: none of this shows up in `next dev`. `next start` always sends `no-store`, and Vercel doesn't by itself. On an iPhone simulator, end the app's page with `kill -9` on its WebContent process while it's in the background, then reopen it.
+Testing: none of this shows up in `next dev`. `next start` always sends `no-store`, and Vercel doesn't by itself, so check the header on the live site after a deploy that touches it. On an iPhone simulator, end the app's page with `kill -9` on its WebContent process while it's in the background, then reopen it.
 
 ## Local development
 
