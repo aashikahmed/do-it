@@ -48,6 +48,8 @@ function friendly(msg: string | undefined) {
     "This pact has no number to set",
     "You've checked in, so your number stays for this round",
     "This pact has no next level",
+    "Pick two to four ideas",
+    "That's plenty of links for today",
     "That's plenty for today. Thank you",
     "Only yesterday can be made up",
     "Only yesterday can be called a miss",
@@ -111,11 +113,12 @@ export async function syncTimeZone(timezone: string): Promise<ActionResult> {
 
 // ───────────────────────── pacts ─────────────────────────
 
-export async function createPact(input: CreateInput): Promise<ActionResult<{ id: string; code: string }>> {
+/** `asked`: the first name of whoever asked for this (an "ask a friend" link), now in it too. */
+export async function createPact(input: CreateInput): Promise<ActionResult<{ id: string; code: string; asked?: string }>> {
   const parsed = createSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Check the details");
   const v = parsed.data;
-  const { supabase } = await requireUser();
+  const { supabase, userId } = await requireUser();
   const tz = isValidTimeZone(v.timezone) ? v.timezone : "UTC";
   const { data: id, error } = await supabase.rpc("create_pact", {
     p_title: v.title,
@@ -142,7 +145,35 @@ export async function createPact(input: CreateInput): Promise<ActionResult<{ id:
   });
   if (error || !id) return fail(friendly(error?.message));
   const { data: pact } = await supabase.from("pacts").select("invite_code").eq("id", id).single();
-  return { ok: true, data: { id: id as string, code: pact?.invite_code ?? "" } };
+  let asked: string | undefined;
+  if (v.ask) {
+    // null when someone had already answered: the pact stands on its own
+    const { data: asker } = await supabase.rpc("answer_ask", { p_code: v.ask, p_pact: id });
+    if (asker) {
+      asked = firstName(await displayName(asker as string));
+      after(async () => {
+        const name = firstName(await displayName(userId));
+        await sendPush([asker as string], {
+          title: `${v.emoji} ${name} chose`,
+          // break pacts never name the habit in a notification
+          body: v.kind === "break" ? "You're both in." : `${v.title}. You're both in.`,
+          url: `/p/${id}`,
+          tag: `pact-${id}`,
+        });
+      });
+    }
+  }
+  return { ok: true, data: { id: id as string, code: pact?.invite_code ?? "", asked } };
+}
+
+/** A link with two to four ideas for a friend to choose from. */
+export async function createAsk(ids: string[]): Promise<ActionResult<{ code: string }>> {
+  const parsed = z.array(z.string().max(60)).safeParse(ids);
+  const known = parsed.success ? parsed.data.filter((id) => ideaById(id)) : [];
+  if (known.length < 2 || known.length > 4) return fail("Pick two to four ideas");
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("create_ask", { p_ideas: known });
+  return error || !data ? fail(friendly(error?.message)) : { ok: true, data: { code: data as string } };
 }
 
 /** `number`: your own (build pacts), picked while joining. Undefined keeps the pact's; null is any amount. */

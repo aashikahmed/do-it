@@ -33,6 +33,8 @@ export const createSchema = z.object({
   /** the Explore idea it came from, and at which level */
   ideaId: z.string().max(60).optional(),
   ideaLevel: z.enum(LEVELS).optional(),
+  /** the "ask a friend to choose" link this answers */
+  ask: z.string().max(32).optional(),
 });
 
 export type CreateInput = z.input<typeof createSchema>;

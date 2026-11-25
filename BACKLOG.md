@@ -48,14 +48,12 @@ Decided:
 - Sources nobody could confirm aren't shown (18 at first: `checked: false` in `lib/explore/ideas.ts`).
 - Seasonal sets and popular ideas are left out for now.
 
-Built: the pages and catalog, your own number, one level up, suggestions (read in admin).
-
-Next:
-- A link and image per idea (break ideas get a plain image), and ask a friend to choose.
+Built: the pages and catalog, your own number, one level up, suggestions (read in admin), a link and image per idea, ask a friend to choose.
 
 Open questions:
 - Who opens the 18 unchecked sources?
 - A time target of seven hours reads "At least 7:00:00" on the pact. Fine on an input, odd in a sentence.
+- The preview images use the default font: bundling Bricolage Grotesque would need a font file in the repo.
 
 ### Slack and coming back
 Added 2026-11-25 · `idea`

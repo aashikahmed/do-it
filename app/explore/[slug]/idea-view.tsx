@@ -7,13 +7,14 @@ import { BackButton } from "@/components/explore/back-button";
 import { BottomDock } from "@/components/bottom-dock";
 import { IdeaRows } from "@/components/explore/idea-row";
 import { LevelPicker } from "@/components/explore/level-picker";
+import { ShareIdea } from "@/components/explore/share-idea";
 import { PactCreated } from "@/components/pact-created";
 import { Sheet } from "@/components/sheet";
 import { toast } from "@/components/toast";
 import { createPact } from "@/lib/client-actions";
 import { addDays, deviceTimeZone, todayIn } from "@/lib/dates";
 import type { RuleDraft } from "@/lib/edit";
-import { savePending, saveCreateDraft, usePending, type Pending } from "@/lib/explore/handoff";
+import { savePending, saveCreateDraft, useAskCode, usePending, type Pending } from "@/lib/explore/handoff";
 import { toggleSaved, useSaved } from "@/lib/explore/saved";
 import type { Idea, IdeaCard, Level } from "@/lib/explore/types";
 import { isWeekly, levelDraft, pactTitle, startText } from "@/lib/explore/words";
@@ -40,7 +41,8 @@ function View({ idea, slug, next, pending }: Props & { pending: Pending | null }
   const [plan, setPlan] = useState(pending?.plan ?? (idea.kind === "break" ? (idea.cravingPlan ?? "") : ""));
   const [open, setOpen] = useState(!!pending);
   const [busy, setBusy] = useState(false);
-  const [created, setCreated] = useState<{ id: string; code: string } | null>(null);
+  const [created, setCreated] = useState<{ id: string; code: string; asked?: string } | null>(null);
+  const ask = useAskCode();
   const saved = useSaved().includes(idea.id);
 
   const isBreak = idea.kind === "break";
@@ -64,14 +66,14 @@ function View({ idea, slug, next, pending }: Props & { pending: Pending | null }
     if (!data.session) {
       savePending({ id: idea.id, level, draft, offset, plan });
       setBusy(false);
-      router.push(`/signin?next=${encodeURIComponent(`/explore/${slug}`)}`);
+      router.push(`/signin?next=${encodeURIComponent(`/explore/${slug}${ask ? `?ask=${ask}` : ""}`)}`);
       return;
     }
     const tz = deviceTimeZone();
     const today = todayIn(tz);
     // a Monday picked for a weekly pact falls back to today if it isn't on offer any more
     const start = addDays(today, startOffsets(today, weekly).includes(offset) ? offset : 0);
-    const res = await createPact(createInput(draft, look, start, tz));
+    const res = await createPact({ ...createInput(draft, look, start, tz), ask: ask ?? undefined });
     setBusy(false);
     if (!res.ok) return toast(res.error, "error");
     savePending(null);
@@ -81,7 +83,7 @@ function View({ idea, slug, next, pending }: Props & { pending: Pending | null }
   }
 
   function changeAll() {
-    saveCreateDraft({ look, draft, offset });
+    saveCreateDraft({ look, draft, offset, ask });
     savePending(null);
     router.push("/new?from=idea");
   }
@@ -94,6 +96,7 @@ function View({ idea, slug, next, pending }: Props & { pending: Pending | null }
         code={created.code}
         color={idea.color}
         emoji={idea.emoji}
+        asked={created.asked}
         pact={
           isBreak
             ? { kind: "break", title: pactTitle(idea, draft), subject: idea.subject, emoji: idea.emoji, cadence: weekly ? "weekly" : "daily", measure: draft.mode === "amount" ? "count" : "none" }
@@ -114,11 +117,12 @@ function View({ idea, slug, next, pending }: Props & { pending: Pending | null }
           <span className="ml-1 text-[30px] leading-none" aria-hidden>
             {idea.emoji}
           </span>
+          <ShareIdea slug={slug} title={isBreak ? null : idea.title} />
           <button
             onClick={() => toast(toggleSaved(idea.id) ? "Saved on this device" : "Removed")}
             aria-pressed={saved}
             aria-label="Save for later"
-            className="-mr-2 ml-auto flex h-11 w-11 items-center justify-center"
+            className="-mr-2 flex h-11 w-11 items-center justify-center"
           >
             <Bookmark size={24} strokeWidth={2.4} fill={saved ? "currentColor" : "none"} aria-hidden />
           </button>
@@ -128,6 +132,7 @@ function View({ idea, slug, next, pending }: Props & { pending: Pending | null }
       </header>
 
       <div className="px-5 pt-5 pb-6">
+        {ask && <p className="mb-4 rounded-2xl bg-[#e3e6ff] px-4 py-3 text-[15px] leading-snug font-semibold">You&apos;re choosing for a friend. They&apos;ll be in this pact with you.</p>}
         <LevelPicker idea={idea} level={level} draft={draft} onLevel={pick} set={set} />
 
         {idea.caution && <p className="mt-4 rounded-2xl bg-[#ffe2db] px-4 py-3 text-[15px] leading-snug">{idea.caution}</p>}

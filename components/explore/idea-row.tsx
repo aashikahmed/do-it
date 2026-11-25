@@ -2,10 +2,10 @@ import Link from "next/link";
 import type { IdeaCard } from "@/lib/explore/types";
 
 /** One idea in a list. `why` is what a search matched on when the title doesn't show it. */
-export function IdeaRow({ card, why }: { card: IdeaCard; why?: string }) {
+export function IdeaRow({ card, why, query = "" }: { card: IdeaCard; why?: string; query?: string }) {
   const meta = card.kind === "break" ? "Break a habit" : [`${card.minutes || 1} min`, card.when === "day" ? "daytime" : card.when === "anytime" ? "" : card.when].filter(Boolean).join(", ");
   return (
-    <Link href={`/explore/${card.slug}`} data-color={card.color} className="flex items-center gap-3 rounded-[20px] bg-paper p-3 active:scale-[0.985]">
+    <Link href={`/explore/${card.slug}${query}`} data-color={card.color} className="flex items-center gap-3 rounded-[20px] bg-paper p-3 active:scale-[0.985]">
       <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--pact-soft)] text-[24px]" aria-hidden>
         {card.emoji}
       </span>

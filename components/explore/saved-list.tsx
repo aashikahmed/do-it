@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSaved } from "@/lib/explore/saved";
 import type { IdeaCard } from "@/lib/explore/types";
+import { AskFriend } from "./ask-friend";
 import { IdeaRows } from "./idea-row";
 
 export function SavedList({ cards }: { cards: IdeaCard[] }) {
@@ -16,5 +17,10 @@ export function SavedList({ cards }: { cards: IdeaCard[] }) {
         </Link>
       </>
     );
-  return <IdeaRows cards={saved} />;
+  return (
+    <>
+      <IdeaRows cards={saved} />
+      {saved.length > 1 && <AskFriend ids={saved.slice(0, 4).map((c) => c.id)} />}
+    </>
+  );
 }

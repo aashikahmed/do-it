@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAdminEmail } from "@/lib/admin-access";
 
-const PUBLIC = [/^\/$/, /^\/signin/, /^\/j\//, /^\/explore(\/|$)/, /^\/api\/cron/, /^\/auth\//, /^\/api\/auth\//];
+const PUBLIC = [/^\/$/, /^\/signin/, /^\/j\//, /^\/explore(\/|$)/, /^\/ask\//, /^\/api\/cron/, /^\/auth\//, /^\/api\/auth\//];
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });

@@ -22,6 +22,7 @@ function wrap<F extends (...args: any[]) => Promise<any>>(fn: F): F {
 export const saveProfile = wrap(A.saveProfile);
 export const syncTimeZone = wrap(A.syncTimeZone);
 export const createPact = wrap(A.createPact);
+export const createAsk = wrap(A.createAsk);
 export const joinPact = wrap(A.joinPact);
 export const leavePact = wrap(A.leavePact);
 export const editPact = wrap(A.editPact);

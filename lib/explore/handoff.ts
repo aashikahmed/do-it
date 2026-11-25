@@ -47,10 +47,19 @@ export function usePending(id: string) {
   return p?.id === id ? p : null;
 }
 
+/** The "ask a friend to choose" link this page was opened from (?ask=…). Read in the browser so the page stays static. */
+export function useAskCode() {
+  const search = useSyncExternalStore(never, () => window.location.search, () => "");
+  const code = new URLSearchParams(search).get("ask");
+  return code && /^[a-z0-9]{4,32}$/i.test(code) ? code : null;
+}
+
 export interface CreateDraft {
   look: PactLook;
   draft: RuleDraft;
   offset: number;
+  /** the "ask a friend" link it answers */
+  ask: string | null;
 }
 export const saveCreateDraft = (d: CreateDraft | null) => put(DRAFT, d);
 export function useCreateDraft(on: boolean) {
