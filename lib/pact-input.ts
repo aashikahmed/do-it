@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { PactColor } from "./data";
 import type { Day } from "./dates";
 import { draftRules, type RuleDraft } from "./edit";
+import { LEVELS, type Level } from "./explore/types";
 import { breakTitle, inSentence } from "./view";
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -29,6 +30,9 @@ export const createSchema = z.object({
   limitStep: z.number().positive().max(999999).nullable().optional(),
   askNextMorning: z.boolean().optional(),
   cravingPlan: z.string().trim().max(140).optional(),
+  /** the Explore idea it came from, and at which level */
+  ideaId: z.string().max(60).optional(),
+  ideaLevel: z.enum(LEVELS).optional(),
 });
 
 export type CreateInput = z.input<typeof createSchema>;
@@ -41,6 +45,7 @@ export interface PactLook {
   emoji: string;
   color: PactColor;
   cravingPlan: string;
+  idea?: { id: string; level: Level };
 }
 
 export function createInput(d: RuleDraft, look: PactLook, start: Day, timezone: string): CreateInput {
@@ -65,5 +70,7 @@ export function createInput(d: RuleDraft, look: PactLook, start: Day, timezone: 
     limitStep: r.limit_step,
     askNextMorning: r.ask_next_morning,
     cravingPlan: isBreak ? look.cravingPlan.trim() || undefined : undefined,
+    ideaId: look.idea?.id,
+    ideaLevel: look.idea?.level,
   };
 }

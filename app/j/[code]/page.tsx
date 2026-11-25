@@ -4,7 +4,9 @@ import { cadenceText, listNames, startsText } from "@/lib/view";
 import { weeksRun } from "@/lib/week";
 import { todayIn, diffDays } from "@/lib/dates";
 import { targetText, type Direction, type Measure } from "@/lib/measure";
-import { JoinButton } from "./join-button";
+import { numberLevels } from "@/lib/explore/levels";
+import { hasNumber } from "@/lib/own-number";
+import { JoinForm } from "./join-form";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -28,6 +30,7 @@ type Preview = {
   subject?: string | null;
   rest_days?: number;
   limit_step?: number | null;
+  idea_id?: string | null;
   ended: boolean;
   members: { id: string; name: string }[];
 };
@@ -87,7 +90,11 @@ async function Invite({ params }: { params: PageProps<"/j/[code]">["params"] }) 
         <p className="mb-2 rounded-[22px] bg-white/20 p-5 text-center text-[17px] font-bold">This pact has already finished.</p>
       ) : (
         <div className="space-y-3">
-          <JoinButton code={code} signedIn={!!userId} />
+          <JoinForm
+            code={code}
+            signedIn={!!userId}
+            number={hasNumber({ kind: p.kind ?? "build", measure: p.measure }) ? { t: { measure: p.measure, direction: p.direction, unit: p.unit, target: p.target === null ? null : Number(p.target) }, levels: numberLevels({ kind: p.kind ?? "build", measure: p.measure, unit: p.unit, idea_id: p.idea_id }) } : null}
+          />
           <p className="text-center text-[14px] opacity-75">
             {p.kind === "break"
               ? "Each morning you say how yesterday went. If anyone gives in, the streak breaks for everyone."

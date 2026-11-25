@@ -56,13 +56,22 @@ import { ValueInput } from "@/components/measure-input";
 import { Activity } from "./activity";
 import { CatchUpCard, EarlierPanel, EarlierSheet, hasEarlierDays } from "./earlier";
 import { ChangedCard, EditPact } from "./edit-pact";
+import { NumberSheet } from "./number-sheet";
+import type { NumberLevel } from "@/lib/explore/levels";
+import { canSetNumber, hasNumber, numberOf, numbersDiffer, numberText, withOwnNumber } from "@/lib/own-number";
 import { EditSheet, EntryFields } from "./entry";
 import { ProgressView } from "@/components/progress-view";
 
-export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Series | null }) {
+/** The next level of the idea a finished pact came from. */
+type LevelUp = { name: string; text: string; weekly: boolean };
+
+export function PactView({ b: shared, me, series, levels, up }: { b: PactBundle; me: Me; series: Series | null; levels: NumberLevel[]; up: LevelUp | null }) {
+  // everything below words, charts and prefills the viewer's own number; editing the pact works on the shared one
+  const b = useMemo(() => withOwnNumber(shared, me.id), [shared, me.id]);
   const { pact, state, members } = b;
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [numberOpen, setNumberOpen] = useState(false);
   const [burst, setBurst] = useState<{ title: string; subtitle?: string } | null>(null);
   useFinishMoment(b, setBurst);
   const [tab, setTab] = useState<"today" | "progress">("today");
@@ -105,11 +114,11 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
           state.repair && <RepairCard b={b} me={me.id} />
         )}
         <CatchUpCard b={b} me={me.id} />
-        <ChangedCard b={b} me={me.id} />
+        <ChangedCard b={shared} me={me.id} />
         {state.phase === "ended" ? (
           <>
             <Recap b={b} me={me} />
-            <GoAgain b={b} me={me} series={series} />
+            <GoAgain b={b} me={me} series={series} up={up} />
             {series && series.rounds.length > 1 && <AllRounds b={b} series={series} />}
           </>
         ) : (
@@ -117,7 +126,7 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
             {isSolo && <SoloInvite b={b} />}
             {!isSolo && <PushCard partner={firstName(members.find((m) => m.user_id !== me.id)?.name ?? "")} />}
             {state.phase === "active" && isPaused(b, me.id) && <PausedCard b={b} me={me.id} />}
-            <Roster b={b} me={me} />
+            <Roster b={shared} me={me} />
           </>
         )}
         <Activity b={b} me={me} />
@@ -140,8 +149,17 @@ export function PactView({ b, me, series }: { b: PactBundle; me: Me; series: Ser
           setMenuOpen(false);
           setEditing(true);
         }}
+        onNumber={
+          canSetNumber(b, me.id)
+            ? () => {
+                setMenuOpen(false);
+                setNumberOpen(true);
+              }
+            : undefined
+        }
       />
-      <EditPact b={b} me={me.id} open={editing && state.phase !== "ended"} onClose={() => setEditing(false)} />
+      <NumberSheet b={b} levels={levels} open={numberOpen} onClose={() => setNumberOpen(false)} />
+      <EditPact b={shared} me={me.id} open={editing && state.phase !== "ended"} onClose={() => setEditing(false)} />
       <Burst show={!!burst} title={burst?.title ?? ""} subtitle={burst?.subtitle} onDone={() => setBurst(null)} />
     </main>
   );
@@ -271,6 +289,8 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
   const active = members.filter((m) => !pausedNow(m.user_id));
   const letters = pact.kind !== "break" ? weekDays(b, me.id) : null;
   const paused = members.filter((m) => pausedNow(m.user_id));
+  // `b` is the shared pact here, so anyone without a number of their own gets the pact's, not the viewer's
+  const numbers = numbersDiffer({ pact, members });
 
   function row(m: (typeof members)[number]) {
     const isMe = m.user_id === me.id;
@@ -343,6 +363,7 @@ function Roster({ b, me }: { b: PactBundle; me: Me }) {
                 {isMe && <span className="font-medium text-ink-3"> (you)</span>}
               </p>
               <p className={`truncate text-[15px] ${done ? "font-semibold text-ink" : "text-ink-2"}`}>{status}</p>
+              {numbers && <p className="text-[14px] leading-snug text-ink-2">Aims for {numberText(pact, numberOf(pact, m))}</p>}
               {days && <WeekDots week={days} />}
               {sub && <p className={`text-[14px] leading-snug font-semibold ${weekAtRisk(week) ? "text-[#c4381b]" : "text-ink-2"}`}>{sub}</p>}
               {!sub && starting && (
@@ -1524,7 +1545,7 @@ function Recap({ b, me }: { b: PactBundle; me: Me }) {
             <Avatar id={m.user_id} name={m.name} src={m.avatar_url} size={36} onTap={m.user_id === me.id ? undefined : () => logAvatarTap(pact.id, m.user_id)} />
             <span className="flex-1 text-[16px] font-bold">{m.name}</span>
             <span className="tnum text-right text-[15px] text-ink-2">
-              {pact.kind === "break" ? `${count} ${count === 1 ? "day" : "days"} kept` : `${count} check-ins${extra}`}
+              {pact.kind === "break" ? `${count} ${count === 1 ? "day" : "days"} kept` : `${count} ${count === 1 ? "check-in" : "check-ins"}${extra}`}
             </span>
           </li>
         ))}
@@ -1534,7 +1555,7 @@ function Recap({ b, me }: { b: PactBundle; me: Me }) {
 }
 
 /** Go again: the next round with the same settings and the same people, or a way into it if it's already on. */
-function GoAgain({ b, me, series }: { b: PactBundle; me: Me; series: Series | null }) {
+function GoAgain({ b, me, series, up }: { b: PactBundle; me: Me; series: Series | null; up: LevelUp | null }) {
   const { pact, members } = b;
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -1554,9 +1575,9 @@ function GoAgain({ b, me, series }: { b: PactBundle; me: Me; series: Series | nu
   if (!inIt) return null;
 
   const group = members.length > 1;
-  async function go() {
+  async function go(levelUp = false) {
     setBusy(true);
-    const res = await startNextRound(pact.id);
+    const res = await startNextRound(pact.id, levelUp);
     if (!res.ok) {
       setBusy(false);
       return toast(res.error, "error");
@@ -1573,12 +1594,24 @@ function GoAgain({ b, me, series }: { b: PactBundle; me: Me; series: Series | nu
         {pact.cadence === "weekly" && ` Weeks will run ${weeksRun(b.today)}.`}
       </p>
       <button
-        onClick={go}
+        onClick={() => go()}
         disabled={busy}
         className="mt-5 flex h-14 w-full items-center justify-center rounded-2xl bg-white text-[17px] font-extrabold text-ink transition-transform active:scale-[0.98] disabled:opacity-70"
       >
         {busy ? "Starting…" : "Go again"}
       </button>
+      {up && (
+        <button
+          onClick={() => go(true)}
+          disabled={busy}
+          className="mt-2 w-full rounded-2xl bg-white/20 px-4 py-3 text-center transition-transform active:scale-[0.98] disabled:opacity-70"
+        >
+          <span className="block text-[17px] font-extrabold">One level up: {up.name.toLowerCase()}</span>
+          <span className="mt-0.5 block text-[14px] font-medium opacity-85">
+            {up.text}.{up.weekly ? ` Weeks will run ${weeksRun(b.today)}.` : ""}
+          </span>
+        </button>
+      )}
       {group && <p className="mt-3 text-center text-[13px] font-medium opacity-75">Everyone still in it comes along and gets a heads-up.</p>}
       <Link href="/new" className="mt-2 flex h-11 items-center justify-center text-[15px] font-bold underline-offset-4 opacity-90 hover:underline">
         Start something new
@@ -1636,7 +1669,7 @@ function AllRounds({ b, series }: { b: PactBundle; series: Series }) {
 
 // ───────────────────────── menu ─────────────────────────
 
-function MenuSheet({ b, me, open, onClose, onEdit }: { b: PactBundle; me: Me; open: boolean; onClose: () => void; onEdit: () => void }) {
+function MenuSheet({ b, me, open, onClose, onEdit, onNumber }: { b: PactBundle; me: Me; open: boolean; onClose: () => void; onEdit: () => void; onNumber?: () => void }) {
   const owner = b.pact.created_by === me.id;
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1666,7 +1699,7 @@ function MenuSheet({ b, me, open, onClose, onEdit }: { b: PactBundle; me: Me; op
         {b.pact.kind === "break" ? (
           <Row k="Asks" v={b.pact.ask_next_morning ? "Each morning, about yesterday" : "From 6pm, or the next morning"} />
         ) : (
-          <Row k="Tracking" v={b.pact.measure === "none" ? "Streak only" : targetText(b.pact) ?? (b.pact.measure === "time" ? "Time" : b.pact.unit ?? "")} />
+          <Row k={hasNumber(b.pact) && b.members.length > 1 ? "Your number" : "Tracking"} v={b.pact.measure === "none" ? "Streak only" : targetText(b.pact) ?? (b.pact.measure === "time" ? "Time" : b.pact.unit ?? "")} />
         )}
         <Row k="Dates" v={`${formatDay(b.pact.start_date, { day: "numeric", month: "short" })} to ${formatDay(b.state.endDate, { day: "numeric", month: "short" })}`} />
         <Row k="Freezes" v={`${myFreezes(b, me.id)} of ${b.pact.freezes_allowed} left, your own`} />
@@ -1688,6 +1721,11 @@ function MenuSheet({ b, me, open, onClose, onEdit }: { b: PactBundle; me: Me; op
           ? "Each day closes a link when everyone says they stayed off it. You can answer until midnight the next day. If you give in, one of your own freezes covers it automatically. Out of freezes, or quiet for 3 days, and you're paused: the chain carries on without you until your next yes. You only count once you've said yes for a day. Notifications only come in the morning, and never say what the pact is about."
           : "The chain closes a link when everyone checks in. Miss a day and you can make it up the next day, until midnight. After that one of your own freezes covers it, automatically. Out of freezes, or quiet for 3 days, and you're paused: the chain carries on without you until your next check-in. Nobody counts until their first check-in, so someone who never starts can't break it."}
       </p>
+      {onNumber && (
+        <button onClick={onNumber} className="mt-5 h-14 w-full rounded-2xl bg-mist text-[16px] font-bold">
+          Change your number
+        </button>
+      )}
       {owner && b.state.phase !== "ended" && (
         <button onClick={onEdit} className="mt-5 h-14 w-full rounded-2xl bg-mist text-[16px] font-bold">
           Edit pact

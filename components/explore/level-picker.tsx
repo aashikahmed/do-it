@@ -28,7 +28,7 @@ export function LevelPicker({ idea, level, draft: d, onLevel, set }: { idea: Ide
         </div>
       </div>
       <p className="mt-3 text-[14px] leading-snug text-ink-2">
-        {counted ? "Everyone in the pact shares it, and it's a minimum: set it for whoever finds it hardest, and the rest can log more." : "Everyone in the pact shares it, so set it for whoever finds it hardest."}{" "}
+        {counted ? "The days are shared, the number is yours. Friends pick their own when they join." : "Everyone in the pact shares it, so set it for whoever finds it hardest."}{" "}
         {freezes === 1 ? "1 freeze" : `${freezes} freezes`} each.
       </p>
     </section>
