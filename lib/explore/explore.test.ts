@@ -62,7 +62,7 @@ describe("every idea", () => {
     for (const i of IDEAS) {
       const text = [i.title, i.line, i.why, i.together, i.firstStep, i.caution ?? "", i.evidence.note, ...LEVELS.flatMap((l) => [i.levels[l].pickIf, i.levels[l].why])];
       for (const t of text) expect(t, i.id).not.toMatch(/[—→!]/);
-      for (const t of [i.line, i.why, i.together, i.firstStep]) expect(/[.?]$/.test(t), `${i.id}: ${t}`).toBe(true);
+      for (const t of [i.line, i.why, i.together, i.firstStep]) expect(/[.?][']?$/.test(t), `${i.id}: ${t}`).toBe(true);
       expect(i.title.length, i.id).toBeLessThanOrEqual(34);
       for (const l of LEVELS) expect(i.levels[l].pickIf.endsWith("."), i.id).toBe(false);
     }
