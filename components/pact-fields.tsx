@@ -6,7 +6,7 @@ import { useState, type ReactNode } from "react";
 import { ValueInput } from "@/components/measure-input";
 import type { PactColor } from "@/lib/data";
 import { weekdayOf, type Day } from "@/lib/dates";
-import { startLabel, type RuleDraft } from "@/lib/edit";
+import { DAILY_LENGTHS, WEEKLY_LENGTHS, lengthFor, startLabel, type RuleDraft } from "@/lib/edit";
 import { MEASURES, type Direction, type Tracking } from "@/lib/measure";
 import { restDaysText, type BreakMode } from "@/lib/view";
 import { weeksRun } from "@/lib/week";
@@ -14,15 +14,6 @@ import { weeksRun } from "@/lib/week";
 export const EMOJIS = ["🔥", "💪", "🏋️", "🏃", "📚", "🧘", "💻", "✍️", "💧", "🥗", "🍬", "🌅", "🎸", "🧠", "🚶", "🙏"];
 export const BREAK_EMOJIS = ["✋", "🥤", "🍬", "🍷", "🍺", "🚬", "🍟", "🍫", "📱", "🎮", "🥡", "☕", "🛒", "💸", "🌙", "🚫"];
 const COLORS: PactColor[] = ["blue", "ember", "sun", "mint", "violet", "rose"];
-
-export const DAILY_LENGTHS = [7, 14, 21, 30, 60, 90];
-export const WEEKLY_LENGTHS = [4, 8, 12].map((w) => w * 7);
-
-/** the length to keep when the cadence changes: the same one if it's on offer, otherwise the usual one */
-export function lengthFor(cadence: "daily" | "weekly", days: number) {
-  if (cadence === "weekly") return WEEKLY_LENGTHS.includes(days) ? days : 28;
-  return DAILY_LENGTHS.includes(days) ? days : 30;
-}
 
 /** Monday first, as bits of the weekday mask (0 = Sunday) */
 const WEEK = [
@@ -130,7 +121,9 @@ export function HowMuchPicker({ d, set }: { d: RuleDraft; set: SetRules }) {
       )}
       {d.mode === "amount" && (
         <div className="mt-4 space-y-4 rounded-[22px] bg-paper p-4">
-          <StepRow label="Up to, each day" fewer="Less" value={d.limit} min={1} max={999} onChange={(v) => set({ limit: v, limitStep: d.limitStep === null ? null : Math.min(v, d.limitStep) })} />
+          <Field label="Up to, each day">
+            <LimitInput d={d} set={set} />
+          </Field>
           <Field label="Counted in">
             <input
               maxLength={24}
@@ -144,6 +137,24 @@ export function HowMuchPicker({ d, set }: { d: RuleDraft; set: SetRules }) {
         </div>
       )}
     </>
+  );
+}
+
+/** A break pact's daily limit, set with the same input it's logged with. */
+export function LimitInput({ d, set }: { d: RuleDraft; set: SetRules }) {
+  return (
+    <div className="rounded-2xl bg-mist/60 p-2">
+      <ValueInput
+        t={{ measure: "count", unit: d.limitUnit.trim() || null, direction: "down", target: null }}
+        value={d.limit}
+        min={1}
+        size="md"
+        onChange={(v) => {
+          const limit = Math.max(1, Math.round(v ?? 1));
+          set({ limit, limitStep: d.limitStep === null ? null : Math.min(limit, d.limitStep) });
+        }}
+      />
+    </div>
   );
 }
 
@@ -207,7 +218,8 @@ export function RestDaysPicker({ d, set }: { d: RuleDraft; set: SetRules }) {
 
 // ───────────────────────── how long, when ─────────────────────────
 
-export function LengthPicker({ weekly, value, onPick }: { weekly: boolean; value: number; onPick: (days: number) => void }) {
+/** `on` is what it sits on: tiles are the other one. */
+export function LengthPicker({ weekly, value, onPick, on = "mist" }: { weekly: boolean; value: number; onPick: (days: number) => void; on?: "mist" | "paper" }) {
   return (
     <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Length">
       {(weekly ? WEEKLY_LENGTHS : DAILY_LENGTHS).map((n) => (
@@ -216,7 +228,7 @@ export function LengthPicker({ weekly, value, onPick }: { weekly: boolean; value
           role="radio"
           aria-checked={value === n}
           onClick={() => onPick(n)}
-          className={`h-[84px] rounded-[22px] text-left transition-colors ${value === n ? "bg-blue text-white" : "bg-paper"}`}
+          className={`h-[84px] rounded-[22px] text-left transition-colors ${value === n ? "bg-blue text-white" : on === "mist" ? "bg-paper" : "bg-mist"}`}
         >
           <span className="display tnum block px-4 text-[36px] font-extrabold">{weekly ? n / 7 : n}</span>
           <span className="block px-4 text-[14px] font-semibold opacity-75">{weekly ? "weeks" : "days"}</span>
@@ -230,7 +242,7 @@ export function LengthPicker({ weekly, value, onPick }: { weekly: boolean; value
  * Today, tomorrow, or (weekly pacts) next Monday. A weekly pact's weeks start on its start day, so say which weekdays
  * they'll run: whoever sets it up picks the week for everyone.
  */
-export function StartPicker({ days, value, today, weekly, prefix = "", onPick }: { days: Day[]; value: Day; today: Day; weekly: boolean; prefix?: string; onPick: (d: Day) => void }) {
+export function StartPicker({ days, value, today, weekly, prefix = "", onPick, on = "mist" }: { days: Day[]; value: Day; today: Day; weekly: boolean; prefix?: string; onPick: (d: Day) => void; on?: "mist" | "paper" }) {
   const label = (d: Day) => {
     const l = startLabel(d, today);
     // the far-off one on offer is always next Monday; any other day (where it starts now) is named in full
@@ -249,7 +261,7 @@ export function StartPicker({ days, value, today, weekly, prefix = "", onPick }:
               role="radio"
               aria-checked={value === d}
               onClick={() => onPick(d)}
-              className={`h-14 rounded-[18px] text-[17px] font-bold ${value === d ? "bg-ink text-white" : "bg-paper"}`}
+              className={`h-14 rounded-[18px] text-[17px] font-bold ${value === d ? "bg-ink text-white" : on === "mist" ? "bg-paper" : "bg-mist"}`}
             >
               {text[0].toUpperCase() + text.slice(1)}
             </button>
@@ -355,12 +367,12 @@ export function Choice({ selected, onClick, title, body }: { selected: boolean; 
   );
 }
 
-function StepRow({ label, value, min, max, fewer = "Fewer", onChange }: { label: string; value: number; min: number; max: number; fewer?: string; onChange: (v: number) => void }) {
+export function StepRow({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (v: number) => void }) {
   return (
     <div className="flex items-center justify-between">
       <span className="text-[17px] font-bold">{label}</span>
       <div className="flex items-center gap-4">
-        <Stepper label={fewer} onClick={() => onChange(Math.max(min, value - 1))} disabled={value <= min}>
+        <Stepper label="Fewer" onClick={() => onChange(Math.max(min, value - 1))} disabled={value <= min}>
           −
         </Stepper>
         <span className="display tnum min-w-8 text-center text-[36px] font-extrabold" aria-live="polite">
@@ -396,9 +408,9 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   );
 }
 
-function Segmented({ options, value, onChange }: { options: [string, string][]; value: string; onChange: (v: string) => void }) {
+export function Segmented({ options, value, onChange, label }: { options: [string, string][]; value: string; onChange: (v: string) => void; label?: string }) {
   return (
-    <div className="grid gap-1 rounded-2xl bg-mist p-1" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }} role="radiogroup">
+    <div className="grid gap-1 rounded-2xl bg-mist p-1" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }} role="radiogroup" aria-label={label}>
       {options.map(([v, label]) => (
         <button
           key={v}

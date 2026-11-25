@@ -220,7 +220,7 @@ export function CreateFlow() {
   }
 
   return (
-    <main className="flex min-h-dvh flex-col px-5 pt-safe pb-safe">
+    <main data-color={d.color} className="flex min-h-dvh flex-col px-5 pt-safe pb-safe">
       <div className="flex items-center gap-3 pt-3">
         <button
           onClick={() => (step === 0 ? router.back() : go(step - 1))}

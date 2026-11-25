@@ -20,6 +20,7 @@ import { toast } from "@/components/toast";
 import type { PactBundle } from "@/lib/data";
 import { addDays, formatDay } from "@/lib/dates";
 import { changedSince, draftOf, draftRules, editLock, lockText, rulesOf, ruleChanges, sameRules, startChoices, startLabel, trackText, type RuleDraft } from "@/lib/edit";
+import { unitFor } from "@/lib/measure";
 import { freezesFor } from "@/lib/streak";
 import { breakTitle, cadenceText, capitalize, firstName, inSentence, restDaysText, subjectOf } from "@/lib/view";
 import { weeksRun } from "@/lib/week";
@@ -135,7 +136,7 @@ function Editor({ b, me, onClose }: { b: PactBundle; me: string; onClose: () => 
   }
 
   const weeks = rules.duration_days / 7;
-  const limitText = rules.measure === "count" ? `Up to ${rules.target} ${rules.unit ?? ""} a day${rules.limit_step ? `, ${rules.limit_step} less each week` : ""}`.replace(/ +/g, " ") : "";
+  const limitText = rules.measure === "count" ? `Up to ${rules.target} ${unitFor(rules.target, rules.unit)} a day${rules.limit_step ? `, ${rules.limit_step} less each week` : ""}`.replace(/ +/g, " ") : "";
   const rows: { panel: Panel; k: string; v: string }[] = [
     isBreak
       ? { panel: "howmuch", k: "How much is OK", v: mode === "days" ? `${7 - rules.times_per_week} ${rules.times_per_week === 6 ? "day" : "days"} a week` : mode === "amount" ? limitText : "None at all" }
