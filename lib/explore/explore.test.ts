@@ -172,6 +172,12 @@ describe("filters", () => {
       }
     }
   });
+  it("doesn't ask about kit or place when every idea is something to stop", () => {
+    const ids = chipsFor(cards.filter((c) => c.kind === "break"), NO_FILTERS).map((c) => c.chip.id);
+    expect(ids).not.toContain("outside");
+    expect(ids).not.toContain("kit");
+    expect(ids).not.toContain("10");
+  });
   it("counts what's left with the others on, and keeps a chip that's on", () => {
     const f = { ...NO_FILTERS, minutes: 10, place: "home" as const };
     const chips = chipsFor(body, f);

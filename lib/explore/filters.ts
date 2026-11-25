@@ -51,8 +51,10 @@ export function chipsFor(cards: IdeaCard[], f: Filters): { chip: Chip; on: boole
   const pool = cards.filter((c) => !f.domain || c.domain === f.domain);
   const useful = CHIPS.filter((chip) => {
     if (chipOn(chip, f)) return true;
+    // stopping something takes no minutes, place or kit
+    if (pool.every((c) => c.kind === "break") && ["minutes", "place", "noKit"].some((k) => k in chip.on)) return false;
     const n = pool.filter((c) => passes(c, { ...NO_FILTERS, ...chip.on })).length;
-    return n > 0 && n < pool.length && !("minutes" in chip.on && pool.every((c) => c.kind === "break"));
+    return n > 0 && n < pool.length;
   });
   const on = useful.filter((c) => chipOn(c, f));
   const shown = useful.filter((c) => on.includes(c) || useful.filter((x) => !on.includes(x)).indexOf(c) < 6 - on.length);
