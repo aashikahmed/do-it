@@ -56,7 +56,7 @@ function Flow({ ideas, from, preset, title }: { ideas: IdeaLinks; from: CreateDr
   const [step, setStep] = useState(preset || from ? 1 : 0);
   const [dir, setDir] = useState(1);
   const [busy, setBusy] = useState(false);
-  const [created, setCreated] = useState<{ id: string; code: string } | null>(null);
+  const [created, setCreated] = useState<{ id: string; code: string; asked?: string } | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [d, setD] = useState<Draft>(() => ({
     kind: preset,
@@ -111,7 +111,7 @@ function Flow({ ideas, from, preset, title }: { ideas: IdeaLinks; from: CreateDr
     const tz = deviceTimeZone();
     const weekly = isBreak ? breakCadence === "weekly" : d.cadence === "weekly";
     const start = addDays(todayIn(tz), startFor(tz, d.startOffset, weekly));
-    const res = await createPact(createInput(d, { kind: isBreak ? "break" : "build", title: d.title, subject: d.subject, emoji: d.emoji, color: d.color, cravingPlan: d.cravingPlan, idea: from && from.look.kind === d.kind ? from.look.idea : undefined }, start, tz));
+    const res = await createPact({ ...createInput(d, { kind: isBreak ? "break" : "build", title: d.title, subject: d.subject, emoji: d.emoji, color: d.color, cravingPlan: d.cravingPlan, idea: from && from.look.kind === d.kind ? from.look.idea : undefined }, start, tz), ask: from?.ask ?? undefined });
     setBusy(false);
     if (!res.ok) return toast(res.error, "error");
     saveCreateDraft(null);
@@ -125,6 +125,7 @@ function Flow({ ideas, from, preset, title }: { ideas: IdeaLinks; from: CreateDr
         code={created.code}
         color={d.color}
         emoji={d.emoji}
+        asked={created.asked}
         // a break pact's title isn't in the draft: it's made from the subject when the pact is created
         pact={
           isBreak

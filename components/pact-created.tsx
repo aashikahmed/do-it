@@ -14,6 +14,7 @@ export function PactCreated({
   emoji,
   pact,
   next,
+  asked,
 }: {
   id: string;
   code: string;
@@ -23,6 +24,8 @@ export function PactCreated({
   pact: Parameters<typeof ShareInvite>[0]["pact"];
   /** somewhere to go from here, under the buttons */
   next?: { href: string; label: string };
+  /** someone who asked for this pact and is already in it */
+  asked?: string;
 }) {
   const router = useRouter();
   return (
@@ -36,9 +39,9 @@ export function PactCreated({
         <span className="text-[64px]" aria-hidden>
           {emoji}
         </span>
-        <h1 className="display mt-4 text-[60px] font-extrabold">Now bring someone in.</h1>
+        <h1 className="display mt-4 text-[60px] font-extrabold">{asked ? `You and ${asked} are in.` : "Now bring someone in."}</h1>
         <p className="mt-5 max-w-[32ch] text-[18px] leading-snug opacity-85">
-          Send the link to your partner, or to the whole group. Once they join, you share one chain.
+          {asked ? "You share one chain. Anyone else can join with the link." : "Send the link to your partner, or to the whole group. Once they join, you share one chain."}
         </p>
       </motion.div>
       <div className="space-y-3">
