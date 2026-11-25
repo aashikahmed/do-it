@@ -43,6 +43,10 @@ npm run build
 
 **Dependencies.** Ask in an issue before adding one.
 
+## Adding an idea to Explore
+
+Copy an entry in `lib/explore/ideas.ts`, change it, and run `npm test`: it checks that every level can be created and that the text reads like the rest. Three levels that really differ, a fact people can check about themselves for each, and a source you've opened (or `grade: "judgement"` and say so). A break idea needs a five-character coded `slug`. Nothing about weight, calories or fasting, and hard training is a few times a week, never daily.
+
 ## Database changes
 
 - Add a new file in `supabase/migrations/`. Never edit one that's already merged.

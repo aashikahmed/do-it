@@ -41,9 +41,14 @@ function Landing() {
         <Link href="/signin?next=/new" className="flex h-16 items-center justify-center rounded-[22px] bg-white text-[18px] font-extrabold text-blue">
           Start a pact
         </Link>
-        <Link href="/signin" className="flex h-14 items-center justify-center rounded-[22px] text-[17px] font-bold text-white/85">
-          Sign in
-        </Link>
+        <div className="grid grid-cols-2">
+          <Link href="/explore" className="flex h-14 items-center justify-center rounded-[22px] text-[17px] font-bold text-white/85">
+            Look through ideas
+          </Link>
+          <Link href="/signin" className="flex h-14 items-center justify-center rounded-[22px] text-[17px] font-bold text-white/85">
+            Sign in
+          </Link>
+        </div>
         <p className="pt-1 text-center text-[14px] text-white/60">Got an invite? Open the link on this phone.</p>
       </div>
     </main>
@@ -113,7 +118,13 @@ async function Home() {
       )}
 
       {bundles.length > 0 && (
-        <BottomDock className="pointer-events-none flex justify-center px-4 pt-3 pb-safe" estimate={90}>
+        <BottomDock className="pointer-events-none flex justify-center gap-2.5 px-4 pt-3 pb-safe" estimate={90}>
+          <Link
+            href="/explore"
+            className="pointer-events-auto flex h-14 items-center rounded-full bg-paper px-6 text-[17px] font-extrabold shadow-[0_16px_36px_-12px_rgba(16,20,58,0.45)] active:scale-95"
+          >
+            Explore
+          </Link>
           <Link
             href="/new"
             className="pointer-events-auto flex h-14 items-center gap-2 rounded-full bg-ink px-6 text-[17px] font-extrabold text-white shadow-[0_16px_36px_-12px_rgba(16,20,58,0.6)] active:scale-95"
@@ -139,7 +150,10 @@ function Empty() {
       <Link href="/new" className="mt-8 flex h-16 items-center justify-center rounded-[22px] bg-blue text-[18px] font-extrabold text-white">
         Start a pact
       </Link>
-      <p className="mt-4 text-center text-[15px] text-ink-3">Got an invite? Open the link on this phone.</p>
+      <Link href="/explore" className="mt-2 flex h-14 items-center justify-center text-[17px] font-bold text-blue">
+        Look through ideas
+      </Link>
+      <p className="mt-2 text-center text-[15px] text-ink-3">Got an invite? Open the link on this phone.</p>
     </div>
   );
 }
