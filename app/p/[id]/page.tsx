@@ -3,17 +3,17 @@ import { Suspense } from "react";
 import { getPact } from "@/lib/data";
 import { Fresh } from "@/components/fresh";
 import { TimeZoneSync } from "@/components/time-zone";
-import { PactView } from "./pact-view";
+import { PactScreen } from "./pact-screen";
 
 export default function Page({ params }: PageProps<"/p/[id]">) {
   return (
     <Suspense fallback={<PactSkeleton />}>
-      <PactScreen params={params} />
+      <Pact params={params} />
     </Suspense>
   );
 }
 
-async function PactScreen({ params }: { params: PageProps<"/p/[id]">["params"] }) {
+async function Pact({ params }: { params: PageProps<"/p/[id]">["params"] }) {
   const { id } = await params;
   const { me, bundle, series, at } = await getPact(id);
   if (!me.name) redirect(`/welcome?next=/p/${id}`);
@@ -22,7 +22,7 @@ async function PactScreen({ params }: { params: PageProps<"/p/[id]">["params"] }
     <>
       <Fresh stamp={at} />
       <TimeZoneSync saved={me.timezone} />
-      <PactView key={bundle.pact.id} b={bundle} me={me} series={series} />
+      <PactScreen b={bundle} me={me} series={series} />
     </>
   );
 }
