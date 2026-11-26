@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import { setDay } from "@/lib/client-actions";
+import { setDay, takeBackMiss } from "@/lib/client-actions";
 import { Avatar } from "@/components/avatar";
 import { HeartRow } from "@/components/hearts";
 import { HoldFill, LiftMenu, MenuItem, useHold } from "@/components/hold-menu";
@@ -40,6 +40,7 @@ export function Activity({ b, me }: { b: PactBundle; me: Me }) {
   const [open, setOpen] = useState<Open | null>(null);
   const [showBefore, setShowBefore] = useState(false);
   const [sheet, setSheet] = useState<SheetFor | null>(null);
+  const router = useRouter();
   const hintSeen = useSyncExternalStore(
     subscribeHint,
     () => readHint(),
@@ -66,6 +67,15 @@ export function Activity({ b, me }: { b: PactBundle; me: Me }) {
     else setSheet({ kind: "day", row });
   }
 
+  // today's "I gave in" isn't over yet: it can only be taken back, like Undo on a yes
+  async function takeBack() {
+    setOpen(null);
+    const res = await takeBackMiss(b.pact.id);
+    if (!res.ok) return toast(res.error, "error");
+    toast(res.data?.refunded ? "Taken back. Your freeze is back too." : "Taken back");
+    router.refresh();
+  }
+
   return (
     <section className="rounded-[24px] bg-paper p-2">
       <h2 className="px-3 pt-3 pb-1 text-[17px] font-extrabold">Activity</h2>
@@ -89,7 +99,11 @@ export function Activity({ b, me }: { b: PactBundle; me: Me }) {
       <LiftMenu anchor={open?.rect ?? null} onClose={close} preview={open && <RowBody b={b} me={me} row={open.row} />}>
         {open && (
           <>
-            <MenuItem title={menuTitle(b, open.row)} sub={`Now: ${nowText(b, me.id, open.row)}`} onClick={change} />
+            {isTodaysMiss(b, open.row) ? (
+              <MenuItem title="Take it back" sub="Today goes back to unanswered." onClick={takeBack} />
+            ) : (
+              <MenuItem title={menuTitle(b, open.row)} sub={`Now: ${nowText(b, me.id, open.row)}`} onClick={change} />
+            )}
             {"change" in open.row &&
               open.row.change &&
               (showBefore ? (
@@ -273,13 +287,19 @@ function rowLabel(b: PactBundle, me: string, row: ActivityRow, bare = false) {
   return `${who}${isBreak ? "didn't answer" : "didn't check in"}`;
 }
 
-/** your own rows you can change: today's check-in, and any day of the round that's over */
+/** your own rows you can change: today's answer, and any day of the round that's over */
 function holdable(b: PactBundle, me: string, row: ActivityRow) {
   if (row.user !== me) return false;
   if (row.type === "checkin" && row.day === b.today) return true;
+  if (isTodaysMiss(b, row)) return true;
   const member = b.members.find((m) => m.user_id === me);
   if (row.type === "short") return weekDays(b, me, row).length > 0;
   return canChangeDay(b.pact, member, row.day, b.today);
+}
+
+/** break pacts: "I gave in" about today (build pacts only ever call a miss about yesterday) */
+function isTodaysMiss(b: PactBundle, row: ActivityRow) {
+  return b.pact.kind === "break" && row.type === "miss" && row.said && row.day === b.today;
 }
 
 /** days of a short week you could add a check-in for */
