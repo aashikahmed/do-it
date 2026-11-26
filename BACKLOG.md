@@ -68,6 +68,14 @@ Open questions:
 
 Things we decided not to do yet during other work.
 
+### Confirm the iOS viewport fix on a real phone
+Added 2026-11-26 · `idea`
+
+`components/viewport-heal.tsx` works around an iOS Home Screen app bug (fixed things pushed below the screen after the keyboard closes). It couldn't be reproduced on the simulators here (iOS 17.5 and 26.2), so it's shipped untested on an affected phone. If it keeps happening, log a `ui_events` row with `innerHeight`, `visualViewport.height`/`offsetTop` before and after a heal (needs a new event name and a details column), and look at what the phone reports.
+
+Open questions:
+- Which iOS version is the reporter on, and did they type anything before it happened?
+
 ### Remove the saved-copy cleanup
 Added 2026-11-26 · `idea`
 

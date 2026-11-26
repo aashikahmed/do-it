@@ -3,6 +3,7 @@ import { Bricolage_Grotesque } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { ServiceWorker } from "@/components/service-worker";
 import { Toaster } from "@/components/toast";
+import { ViewportHeal } from "@/components/viewport-heal";
 import "./globals.css";
 
 const brico = Bricolage_Grotesque({
@@ -41,6 +42,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         </div>
         <Toaster />
         <ServiceWorker />
+        <ViewportHeal />
         <Analytics />
       </body>
     </html>

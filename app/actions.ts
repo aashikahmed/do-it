@@ -526,6 +526,19 @@ export async function setDay(input: {
 }
 
 /**
+ * Break pacts: take back today's "I gave in" (held from Activity). Today goes back to unanswered, like Undo on a
+ * yes, and the freeze it spent comes back. Quiet: no push.
+ */
+export async function takeBackMiss(pactId: string): Promise<ActionResult<{ refunded: boolean }>> {
+  if (!uuid.safeParse(pactId).success) return fail("Pact not found");
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("take_back_miss", { p_pact: pactId });
+  if (error) return fail(friendly(error.message));
+  refresh();
+  return { ok: true, data: { refunded: !!(data as { refunded?: boolean } | null)?.refunded } };
+}
+
+/**
  * Catch up on several of your own days at once (the catch-up card): set_day() for each, in date order, in one
  * transaction. Quiet like setDay: no push.
  */
